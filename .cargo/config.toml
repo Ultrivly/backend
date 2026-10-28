@@ -1,0 +1,2 @@
+[env]
+PKG_CONFIG_PATH = "/opt/homebrew/opt/libxml2/lib/pkgconfig:/opt/homebrew/opt/libxslt/lib/pkgconfig"

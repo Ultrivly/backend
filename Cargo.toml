@@ -1,0 +1,50 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "ultrivly"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ultrivly"
+path = "src/main.rs"
+
+[dependencies]
+aes-gcm = "0.11.1"
+anyhow = "1.0.104"
+argon2 = "0.6.0"
+axum = "0.8.9"
+axum-extra = { version = "0.12.6", features = ["cookie"] }
+base64 = "0.23.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+cookie = "0.18"
+dotenvy = "0.15.7"
+futures = "0.3.34"
+hmac = "0.13.0"
+lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder", "hostname"] }
+object_store = { version = "0.14.2", features = ["aws"] }
+openidconnect = "4.0.1"
+rand = "0.10.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+samael = { version = "0.0.22", features = ["xmlsec"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json", "ipnet"] }
+subtle = "2.6.1"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = ["set-header", "limit", "trace", "request-id", "timeout", "util"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = "2.5.8"
+uuid = { version = "1.29.0", features = ["v7", "serde"] }
+webauthn-rs = { version = "0.5.5", features = ["danger-allow-state-serialisation"] }
+
+[dev-dependencies]
+webauthn-authenticator-rs = { version = "0.5.5", features = ["softpasskey"] }
