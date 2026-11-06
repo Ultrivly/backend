@@ -1,22 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 use std::time::Duration;
 
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
@@ -47,16 +28,13 @@ type OidcClient = CoreClient<
     EndpointMaybeSet,
 >;
 
-
 #[derive(Debug, Clone)]
 pub struct SocialProvider {
-    
     pub key: String,
     pub issuer_url: String,
     pub client_id: String,
     pub client_secret: String,
-    
-    
+
     pub trust_verified_email: bool,
 }
 
@@ -74,9 +52,8 @@ impl SocialProvider {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider<'a> {
-    
     Connection(Uuid),
-    
+
     Social(&'a str),
 }
 
@@ -84,10 +61,10 @@ pub enum Provider<'a> {
 pub enum SsoOutcome {
     SignedIn {
         sign_in: SignIn,
-        
+
         redirect_to: Option<String>,
     },
-    
+
     Linked {
         user_id: Uuid,
         redirect_to: Option<String>,
@@ -120,12 +97,12 @@ pub enum SsoError {
     EmailMissing,
     #[error("this email domain is not allowed to sign in here")]
     EmailDomainNotAllowed,
-    
+
     #[error(
         "an account with this email already exists; sign in and link this provider from your account settings"
     )]
     AccountExists,
-    
+
     #[error("you do not have access to this organization; ask an administrator to invite you")]
     NotProvisioned,
     #[error("this account is disabled")]
@@ -153,30 +130,27 @@ impl From<AuthzError> for SsoError {
 
 pub struct NewConnection<'a> {
     pub name: &'a str,
-    
-    
+
     pub issuer_url: &'a str,
     pub client_id: &'a str,
     pub client_secret: &'a str,
     pub email_domains: &'a [&'a str],
     pub jit_provisioning: bool,
-    
+
     pub default_role_id: Option<Uuid>,
     pub enforced: bool,
 }
-
 
 #[derive(Default)]
 pub struct ConnectionChanges<'a> {
     pub enabled: Option<bool>,
     pub enforced: Option<bool>,
     pub jit_provisioning: Option<bool>,
-    
+
     pub default_role_id: Option<Option<Uuid>>,
     pub email_domains: Option<&'a [&'a str]>,
     pub client_secret: Option<&'a str>,
 }
-
 
 pub struct Sso {
     pub(crate) secrets: Secrets,
@@ -219,7 +193,6 @@ pub(crate) struct Identity {
 }
 
 impl Sso {
-    
     pub fn new(
         secrets: Secrets,
         http: HttpClient,
@@ -238,8 +211,6 @@ impl Sso {
             social,
         })
     }
-
-    
 
     pub async fn create_connection(
         &self,
@@ -263,7 +234,7 @@ impl Sso {
             });
         }
         let email_domains = normalize_domains(new.email_domains)?;
-        
+
         self.discover(new.issuer_url).await?;
 
         let mut tx = conn.begin().await?;
@@ -384,7 +355,6 @@ impl Sso {
         Ok(())
     }
 
-    
     pub async fn delete_connection(
         &self,
         conn: &mut PgConnection,
@@ -495,7 +465,6 @@ impl Sso {
             .await
     }
 
-    
     pub async fn connection_for_org(
         conn: &mut PgConnection,
         org_slug: &str,
@@ -511,11 +480,6 @@ impl Sso {
         .await
     }
 
-    
-
-    
-    
-    
     pub async fn begin(
         &self,
         conn: &mut PgConnection,
@@ -532,8 +496,6 @@ impl Sso {
             });
         }
         if let Some(user_id) = link_user_id {
-            
-            
             let verified: bool =
                 sqlx::query_scalar("SELECT email_verified_at IS NOT NULL FROM users WHERE id = $1")
                     .bind(user_id)
@@ -581,7 +543,6 @@ impl Sso {
         Ok(url.to_string())
     }
 
-    
     pub async fn complete(
         &self,
         conn: &mut PgConnection,
@@ -589,8 +550,6 @@ impl Sso {
         code: &str,
         client_info: &ClientInfo,
     ) -> Result<SsoOutcome, SsoError> {
-        
-        
         type StateRow = (
             String,
             String,
@@ -616,7 +575,6 @@ impl Sso {
         };
         let config = self.load_provider(conn, provider).await?;
 
-        
         let identity = self.exchange(&config, code, &nonce, &pkce_verifier).await?;
         self.finish(
             conn,
@@ -731,7 +689,6 @@ impl Sso {
         })
     }
 
-    
     async fn first_sign_in(
         &self,
         conn: &mut PgConnection,
@@ -962,8 +919,6 @@ pub(crate) async fn insert_identity(
     Ok(())
 }
 
-
-
 pub(crate) async fn ensure_membership(
     conn: &mut PgConnection,
     org_id: Uuid,
@@ -1015,8 +970,6 @@ pub(crate) async fn ensure_membership(
     .await?;
     Ok(())
 }
-
-
 
 pub(crate) async fn check_default_role(
     conn: &mut PgConnection,
@@ -1073,7 +1026,6 @@ pub(crate) fn normalize_domains(domains: &[&str]) -> Result<Vec<String>, SsoErro
     }
     Ok(out)
 }
-
 
 pub(crate) fn is_safe_redirect(path: &str) -> bool {
     path.starts_with('/')

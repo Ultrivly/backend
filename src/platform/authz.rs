@@ -1,10 +1,3 @@
-
-
-
-
-
-
-
 use std::collections::HashSet;
 use std::str::FromStr;
 
@@ -12,7 +5,6 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::audit::Actor;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Permission {
@@ -78,7 +70,6 @@ impl Permission {
         Permission::OrganizationManage,
     ];
 
-    
     pub fn as_str(self) -> &'static str {
         match self {
             Permission::CasesRead => "cases.read",
@@ -129,8 +120,6 @@ impl FromStr for Permission {
 #[error("unknown permission {0:?}")]
 pub struct UnknownPermission(pub String);
 
-
-
 pub struct BuiltinRole {
     pub key: &'static str,
     pub name: &'static str,
@@ -138,8 +127,6 @@ pub struct BuiltinRole {
 }
 
 pub const ADMIN_ROLE_KEY: &str = "admin";
-
-
 
 pub const BUILTIN_ROLES: &[BuiltinRole] = &[
     BuiltinRole {
@@ -202,9 +189,6 @@ pub const BUILTIN_ROLES: &[BuiltinRole] = &[
     },
 ];
 
-
-
-
 pub async fn effective_permissions(
     conn: &mut PgConnection,
     org_id: Uuid,
@@ -237,7 +221,7 @@ async fn permissions(
     .bind(include_deleted_org)
     .fetch_all(conn)
     .await?;
-    
+
     Ok(names.iter().filter_map(|n| n.parse().ok()).collect())
 }
 
@@ -249,8 +233,6 @@ pub enum AuthzError {
     Database(#[from] sqlx::Error),
 }
 
-
-
 pub async fn require(
     conn: &mut PgConnection,
     org_id: Uuid,
@@ -259,8 +241,6 @@ pub async fn require(
 ) -> Result<(), AuthzError> {
     require_in(conn, org_id, None, actor, permission).await
 }
-
-
 
 pub async fn require_in(
     conn: &mut PgConnection,
@@ -278,9 +258,6 @@ pub async fn require_in(
         Err(AuthzError::Forbidden)
     }
 }
-
-
-
 
 pub async fn require_ignoring_org_deletion(
     conn: &mut PgConnection,
@@ -303,8 +280,6 @@ pub async fn require_ignoring_org_deletion(
     }
 }
 
-
-
 pub async fn missing_permissions(
     conn: &mut PgConnection,
     org_id: Uuid,
@@ -320,8 +295,6 @@ pub async fn missing_permissions(
     missing.dedup();
     Ok(missing)
 }
-
-
 
 pub async fn actor_permissions(
     conn: &mut PgConnection,
@@ -383,8 +356,6 @@ impl WorkspaceScope {
     }
 }
 
-
-
 pub async fn workspaces_with(
     conn: &mut PgConnection,
     org_id: Uuid,
@@ -428,7 +399,7 @@ mod tests {
         for p in Permission::ALL {
             let name = p.as_str();
             assert!(seen.insert(name), "duplicate permission {name}");
-            
+
             let (area, action) = name.split_once('.').expect("missing '.'");
             let valid =
                 |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c == '_');

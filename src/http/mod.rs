@@ -1,9 +1,8 @@
-
-
-
 pub mod error;
+mod idempotency;
 mod routes;
 mod security;
+pub mod throttle;
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -40,12 +39,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Settings {
     pub public_url: Url,
-    
+
     pub trusted_proxy_hops: usize,
+
+    pub mail_events_secret: Option<String>,
+
+    pub limits: throttle::Limits,
 }
-
-
-
 
 #[derive(Clone, Copy)]
 pub struct CookieNames {
@@ -66,6 +66,8 @@ pub struct Inner {
     pub https: bool,
     pub cookies: CookieNames,
     pub trusted_proxy_hops: usize,
+    pub mail_events_secret: Option<String>,
+    pub throttle: throttle::Throttle,
 }
 
 #[derive(Clone)]
@@ -118,10 +120,11 @@ impl AppState {
             https,
             cookies,
             trusted_proxy_hops: settings.trusted_proxy_hops,
+            mail_events_secret: settings.mail_events_secret.filter(|s| !s.is_empty()),
+            throttle: throttle::Throttle::new(settings.limits),
         })))
     }
 
-    
     pub fn cookie(&self, name: &'static str, value: String, max_age: Duration) -> Cookie<'static> {
         Cookie::build((name, value))
             .http_only(true)
@@ -153,7 +156,6 @@ impl AppState {
         self.cookie(name, String::new(), Duration::ZERO)
     }
 }
-
 
 pub struct Authenticated(pub Session);
 
@@ -228,9 +230,6 @@ pub async fn org_actor(state: &AppState, caller: &Caller, org_id: Uuid) -> Resul
     }
 }
 
-
-
-
 pub async fn require_org_access(
     state: &AppState,
     session: &Session,
@@ -244,10 +243,19 @@ pub async fn require_org_access(
 pub fn router(state: AppState) -> Router {
     let request_id = HeaderName::from_static("x-request-id");
     let mut app = routes::router()
+        .route_layer(middleware::from_fn(crate::platform::telemetry::track_http))
         .fallback(|| async { ApiError::not_found() })
         .layer(middleware::from_fn_with_state(
             state.clone(),
+            idempotency::idempotency,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
             security::csrf,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            throttle::throttle,
         ))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(TimeoutLayer::with_status_code(
@@ -258,7 +266,6 @@ pub fn router(state: AppState) -> Router {
         app = app.layer(SetResponseHeaderLayer::if_not_present(name, value));
     }
     app.layer(PropagateRequestIdLayer::new(request_id.clone()))
-        
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
                 tracing::info_span!(

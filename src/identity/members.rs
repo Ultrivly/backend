@@ -1,17 +1,9 @@
-
-
-
-
-
-
-
 use serde_json::json;
 use sqlx::{Connection, PgConnection};
 use uuid::Uuid;
 
 use crate::audit::{self, Actor};
 use crate::platform::authz::{self, ADMIN_ROLE_KEY, AuthzError, Permission};
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoleAssignment {
@@ -24,7 +16,7 @@ pub struct RoleAssignment {
 pub enum MemberError {
     #[error("permission denied")]
     Forbidden,
-    
+
     #[error("you cannot assign or remove a role with permissions you do not have: {}",
         .0.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", "))]
     CannotGrant(Vec<Permission>),
@@ -104,8 +96,6 @@ pub async fn remove_role(
     let role = authorize(&mut tx, org_id, actor, assignment).await?;
 
     if role.key == ADMIN_ROLE_KEY && assignment.workspace_id.is_none() {
-        
-        
         sqlx::query(
             "SELECT 1 FROM membership_roles
              WHERE org_id = $1 AND role_id = $2 AND workspace_id IS NULL FOR UPDATE",
@@ -165,9 +155,6 @@ struct RoleInfo {
     key: String,
     name: String,
 }
-
-
-
 
 async fn authorize(
     conn: &mut PgConnection,

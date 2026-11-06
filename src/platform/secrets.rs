@@ -1,13 +1,3 @@
-
-
-
-
-
-
-
-
-
-
 use aes_gcm::aead::{Aead, Nonce, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit};
 use anyhow::{Context, bail};
@@ -24,7 +14,6 @@ pub struct Secrets {
 }
 
 impl Secrets {
-    
     pub fn from_base64_key(key: &str) -> anyhow::Result<Self> {
         let bytes = STANDARD
             .decode(key.trim())
@@ -39,7 +28,6 @@ impl Secrets {
         Ok(Self { cipher })
     }
 
-    
     pub fn generate_key() -> String {
         STANDARD.encode(random_bytes::<32>())
     }
@@ -65,8 +53,6 @@ impl Secrets {
         out
     }
 
-    
-    
     pub fn decrypt(&self, context: &str, stored: &[u8]) -> anyhow::Result<Vec<u8>> {
         if stored.len() < 1 + NONCE_LEN || stored[0] != VERSION {
             bail!("unrecognized encrypted secret format");
@@ -88,17 +74,14 @@ impl Secrets {
 
 pub fn random_bytes<const N: usize>() -> [u8; N] {
     let mut bytes = [0u8; N];
-    
+
     rand::fill(&mut bytes[..]);
     bytes
 }
 
-
 pub fn random_token() -> String {
     URL_SAFE_NO_PAD.encode(random_bytes::<32>())
 }
-
-
 
 pub fn token_hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()

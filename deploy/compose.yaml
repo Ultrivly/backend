@@ -1,0 +1,79 @@
+name: ultrivly
+
+x-app: &app
+  image: ${ULTRIVLY_IMAGE:-ultrivly:latest}
+  build:
+    context: ..
+  env_file: .env
+  environment:
+    DATABASE_URL: postgres://ultrivly:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/ultrivly
+    ULTRIVLY_STORAGE_URL: ${ULTRIVLY_STORAGE_URL:-file:///data/files}
+    TMPDIR: /data
+  volumes:
+    - files:/data
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ultrivly
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ultrivly
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ultrivly -d ultrivly"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  files-init:
+    image: ${ULTRIVLY_IMAGE:-ultrivly:latest}
+    user: "0"
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /data/files && chown -R 10001 /data"]
+    volumes:
+      - files:/data
+    restart: "no"
+
+  migrate:
+    <<: *app
+    command: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    command: ["serve"]
+    ports:
+      - "${ULTRIVLY_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      files-init:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      files-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres:
+  files:

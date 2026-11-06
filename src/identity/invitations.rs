@@ -1,11 +1,3 @@
-
-
-
-
-
-
-
-
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -38,7 +30,7 @@ pub enum InvitationError {
     AlreadyMember,
     #[error("invitation not found")]
     NotFound,
-    
+
     #[error("this invitation is invalid or has expired")]
     InvalidToken,
     #[error("this invitation is for a different email address; sign in with that address")]
@@ -65,7 +57,7 @@ pub struct NewInvitation<'a> {
 #[derive(Debug)]
 pub struct CreatedInvitation {
     pub id: Uuid,
-    
+
     pub token: String,
     pub email: String,
     pub org_name: String,
@@ -81,7 +73,6 @@ pub struct InvitationSummary {
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }
-
 
 pub async fn create(
     conn: &mut PgConnection,

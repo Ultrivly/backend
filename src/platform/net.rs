@@ -1,16 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::pin::Pin;
@@ -26,20 +13,61 @@ use crate::config::Deployment;
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrustedHost {
+    host: String,
+    port: Option<u16>,
+}
+
+impl TrustedHost {
+    fn parse(entry: &str) -> Option<Self> {
+        let entry = entry.trim().to_ascii_lowercase();
+        if entry.is_empty() {
+            return None;
+        }
+        if let Some(rest) = entry.strip_prefix('[') {
+            let (host, tail) = rest.split_once(']')?;
+            let port = match tail.strip_prefix(':') {
+                Some(port) => Some(port.parse().ok()?),
+                None if tail.is_empty() => None,
+                None => return None,
+            };
+            return Some(Self {
+                host: host.into(),
+                port,
+            });
+        }
+        match entry.rsplit_once(':') {
+            Some((host, port)) if !host.contains(':') => Some(Self {
+                host: host.into(),
+                port: Some(port.parse().ok()?),
+            }),
+            _ => Some(Self {
+                host: entry,
+                port: None,
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NetPolicy {
-    trusted_hosts: Vec<String>,
+    trusted_hosts: Vec<TrustedHost>,
 }
 
 impl NetPolicy {
-    
     pub fn new(deployment: Deployment, trusted_hosts: &[String]) -> Self {
         let trusted_hosts = match deployment {
             Deployment::Cloud => Vec::new(),
             Deployment::SelfHosted => trusted_hosts
                 .iter()
-                .map(|h| h.trim().to_ascii_lowercase())
-                .filter(|h| !h.is_empty())
+                .filter_map(|h| {
+                    let parsed = TrustedHost::parse(h);
+                    if parsed.is_none() && !h.trim().is_empty() {
+                        tracing::warn!(entry = %h, "ignoring invalid ULTRIVLY_NET_ALLOW entry");
+                    }
+                    parsed
+                })
                 .collect(),
         };
         Self { trusted_hosts }
@@ -49,15 +77,21 @@ impl NetPolicy {
         let host = host.trim_start_matches('[').trim_end_matches(']');
         self.trusted_hosts
             .iter()
-            .any(|h| h.eq_ignore_ascii_case(host))
+            .any(|h| h.host.eq_ignore_ascii_case(host))
     }
 
-    
+    fn is_trusted_url(&self, host: &str, port: Option<u16>) -> bool {
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        self.trusted_hosts
+            .iter()
+            .any(|h| h.host.eq_ignore_ascii_case(host) && h.port.is_none_or(|p| Some(p) == port))
+    }
+
     pub fn check_url(&self, url: &Url) -> Result<(), NetError> {
         let host = url
             .host_str()
             .ok_or_else(|| NetError::Blocked(format!("{url} has no host")))?;
-        if self.is_trusted(host) {
+        if self.is_trusted_url(host, url.port_or_known_default()) {
             return Ok(());
         }
         if url.scheme() != "https" {
@@ -114,26 +148,56 @@ impl HttpClient {
         &self.policy
     }
 
+    pub async fn get(&self, url: &str) -> Result<(u16, Vec<u8>), NetError> {
+        let request = openidconnect::http::Request::builder()
+            .method(openidconnect::http::Method::GET)
+            .uri(url)
+            .header("accept", "application/json")
+            .body(Vec::new())?;
+        let response = self.send(request).await?;
+        Ok((response.status().as_u16(), response.into_body()))
+    }
+
     pub async fn post(
         &self,
         url: &str,
         headers: &[(&str, String)],
         body: Vec<u8>,
     ) -> Result<u16, NetError> {
+        Ok(self.exchange(url, headers, body, TIMEOUT).await?.0)
+    }
+
+    pub async fn exchange(
+        &self,
+        url: &str,
+        headers: &[(&str, String)],
+        body: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<(u16, Vec<u8>), NetError> {
         let mut request = openidconnect::http::Request::builder()
             .method(openidconnect::http::Method::POST)
             .uri(url);
         for (name, value) in headers {
             request = request.header(*name, value);
         }
-        let response = self.send(request.body(body)?).await?;
-        Ok(response.status().as_u16())
+        let response = self.send_with(request.body(body)?, timeout).await?;
+        Ok((response.status().as_u16(), response.into_body()))
     }
 
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, NetError> {
+        self.send_with(request, TIMEOUT).await
+    }
+
+    async fn send_with(
+        &self,
+        request: HttpRequest,
+        timeout: Duration,
+    ) -> Result<HttpResponse, NetError> {
         self.policy
             .check_url(&Url::parse(&request.uri().to_string())?)?;
-        let mut response = self.inner.execute(request.try_into()?).await?;
+        let mut request: reqwest::Request = request.try_into()?;
+        *request.timeout_mut() = Some(timeout);
+        let mut response = self.inner.execute(request).await?;
 
         let mut builder = openidconnect::http::Response::builder().status(response.status());
         for (name, value) in response.headers() {
@@ -149,7 +213,6 @@ impl HttpClient {
         Ok(builder.body(body)?)
     }
 }
-
 
 impl<'c> AsyncHttpClient<'c> for HttpClient {
     type Error = NetError;
@@ -181,8 +244,6 @@ impl Resolve for PublicOnlyResolver {
     }
 }
 
-
-
 pub fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_public_v4(v4),
@@ -203,10 +264,10 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
         || ip.is_documentation()
         || ip.is_multicast()
         || a == 0
-        || (a == 100 && (64..=127).contains(&b)) 
-        || (a == 192 && b == 0 && c == 0) 
-        || (a == 198 && (18..=19).contains(&b)) 
-        || a >= 240) 
+        || (a == 100 && (64..=127).contains(&b))
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 198 && (18..=19).contains(&b))
+        || a >= 240)
 }
 
 fn is_public_v6(ip: Ipv6Addr) -> bool {
@@ -214,10 +275,10 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
     !(ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
-        || (first & 0xfe00) == 0xfc00 
-        || (first & 0xffc0) == 0xfe80 
-        || first == 0x2001 && ip.segments()[1] == 0x0db8 
-        || ip.segments()[..6] == [0, 0, 0, 0, 0, 0]) 
+        || (first & 0xfe00) == 0xfc00
+        || (first & 0xffc0) == 0xfe80
+        || first == 0x2001 && ip.segments()[1] == 0x0db8
+        || ip.segments()[..6] == [0, 0, 0, 0, 0, 0])
 }
 
 #[cfg(test)]
@@ -248,6 +309,37 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_entries_may_pin_a_port() {
+        let policy = NetPolicy::new(
+            Deployment::SelfHosted,
+            &[
+                "HR.internal:443".into(),
+                "10.0.4.12:8443".into(),
+                "llm.internal".into(),
+                "[fd00::5]:9000".into(),
+            ],
+        );
+        let ok = |u: &str| policy.check_url(&Url::parse(u).unwrap()).is_ok();
+        assert!(ok("https://hr.internal/api"));
+        assert!(
+            !ok("http://hr.internal/api"),
+            "port 80 is not the allowed 443"
+        );
+        assert!(ok("http://10.0.4.12:8443/hook"));
+        assert!(!ok("http://10.0.4.12:22/"));
+        assert!(ok("http://llm.internal:11434/v1"));
+        assert!(ok("http://[fd00::5]:9000/x"));
+        assert!(!ok("http://[fd00::5]:9001/x"));
+        assert!(policy.is_trusted("10.0.4.12"));
+        let cloud = NetPolicy::new(Deployment::Cloud, &["llm.internal".into()]);
+        assert!(
+            cloud
+                .check_url(&Url::parse("http://llm.internal/").unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
     fn checks_urls_against_the_policy() {
         let strict = NetPolicy::new(Deployment::SelfHosted, &[]);
         assert!(
@@ -274,7 +366,6 @@ mod tests {
                 .is_ok()
         );
 
-        
         let cloud = NetPolicy::new(Deployment::Cloud, &["keycloak.internal".into()]);
         assert!(
             cloud

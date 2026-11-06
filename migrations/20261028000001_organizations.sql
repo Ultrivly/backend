@@ -1,12 +1,3 @@
-
-
-
-
-
-
-
-
-
 CREATE FUNCTION set_updated_at() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -18,7 +9,7 @@ $$;
 CREATE TABLE organizations (
     id          uuid PRIMARY KEY,
     name        text NOT NULL CHECK (length(trim(name)) > 0),
-    
+
     slug        text NOT NULL UNIQUE CHECK (slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'),
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now()

@@ -1,5 +1,3 @@
-
-
 use sqlx::PgPool;
 use ultrivly::audit::Actor;
 use ultrivly::identity::members::{self, MemberError, RoleAssignment};
@@ -92,7 +90,6 @@ async fn managers_cannot_hand_out_or_take_away_more_than_they_have(pool: PgPool)
     let agent_role = role_id(&pool, org.org_id, "agent").await;
     let mut conn = pool.acquire().await.unwrap();
 
-    
     let managers = roles::create_role(
         &mut conn,
         org.org_id,
@@ -116,7 +113,6 @@ async fn managers_cannot_hand_out_or_take_away_more_than_they_have(pool: PgPool)
     let manager = Actor::User(manager_user);
     let (_, newcomer) = add_member(&pool, org.org_id).await;
 
-    
     members::assign_role(
         &mut conn,
         org.org_id,
@@ -130,7 +126,6 @@ async fn managers_cannot_hand_out_or_take_away_more_than_they_have(pool: PgPool)
     .await
     .unwrap();
 
-    
     let err = members::assign_role(
         &mut conn,
         org.org_id,
@@ -148,7 +143,6 @@ async fn managers_cannot_hand_out_or_take_away_more_than_they_have(pool: PgPool)
         "{err}"
     );
 
-    
     let err = members::remove_role(
         &mut conn,
         org.org_id,
@@ -180,7 +174,6 @@ async fn the_last_administrator_keeps_the_role(pool: PgPool) {
         .unwrap_err();
     assert!(matches!(err, MemberError::LastAdministrator), "{err}");
 
-    
     let (second, second_membership) = add_member(&pool, org.org_id).await;
     members::assign_role(
         &mut conn,
@@ -204,7 +197,6 @@ async fn the_last_administrator_keeps_the_role(pool: PgPool) {
         .unwrap_err();
     assert!(matches!(err, MemberError::LastAdministrator), "{err}");
 
-    
     sqlx::query("UPDATE memberships SET status = 'active' WHERE id = $1")
         .bind(second_membership)
         .execute(&pool)

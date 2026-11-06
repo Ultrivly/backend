@@ -1,9 +1,3 @@
-
-
-
-
-
-
 use std::collections::BTreeSet;
 
 use serde_json::json;
@@ -16,11 +10,11 @@ use crate::platform::authz::{self, AuthzError, Permission};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Role {
     pub id: Uuid,
-    
+
     pub key: String,
     pub name: String,
     pub is_builtin: bool,
-    
+
     pub permissions: Vec<Permission>,
 }
 
@@ -28,7 +22,6 @@ pub struct NewRole<'a> {
     pub name: &'a str,
     pub permissions: &'a [Permission],
 }
-
 
 #[derive(Default)]
 pub struct RoleChanges<'a> {
@@ -40,7 +33,7 @@ pub struct RoleChanges<'a> {
 pub enum RoleError {
     #[error("permission denied")]
     Forbidden,
-    
+
     #[error("you cannot grant permissions you do not have: {}", stored(.0).join(", "))]
     CannotGrant(Vec<Permission>),
     #[error("{field} {reason}")]
@@ -54,7 +47,7 @@ pub enum RoleError {
     NotFound,
     #[error("built-in roles cannot be changed or deleted")]
     BuiltIn,
-    
+
     #[error("role is assigned to {members} member(s)")]
     InUse { members: i64 },
     #[error(transparent)]
@@ -69,8 +62,6 @@ impl From<AuthzError> for RoleError {
         }
     }
 }
-
-
 
 pub async fn list_roles(
     conn: &mut PgConnection,
@@ -173,8 +164,7 @@ pub async fn update_role(
         let current: BTreeSet<Permission> = role.permissions.iter().copied().collect();
         added = permissions.difference(&current).copied().collect();
         removed = current.difference(&permissions).copied().collect();
-        
-        
+
         check_can_grant(&mut tx, org_id, actor, &added.iter().copied().collect()).await?;
 
         sqlx::query("DELETE FROM role_permissions WHERE org_id = $1 AND role_id = $2")
@@ -206,7 +196,6 @@ pub async fn update_role(
     tx.commit().await?;
     Ok(role)
 }
-
 
 pub async fn delete_role(
     conn: &mut PgConnection,
@@ -251,8 +240,6 @@ pub async fn delete_role(
     tx.commit().await?;
     Ok(())
 }
-
-
 
 pub(crate) async fn insert_role(
     conn: &mut PgConnection,
@@ -331,8 +318,6 @@ async fn check_can_grant(
     }
 }
 
-
-
 async fn free_key(
     conn: &mut PgConnection,
     org_id: Uuid,
@@ -352,8 +337,6 @@ async fn free_key(
     let suffix = id.simple().to_string();
     Ok(format!("{base}_{}", &suffix[suffix.len() - 8..]))
 }
-
-
 
 fn key_from_name(name: &str) -> String {
     let mut key = String::new();

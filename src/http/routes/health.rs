@@ -6,11 +6,9 @@ use serde_json::{Value, json};
 use crate::http::AppState;
 use crate::platform::migrations;
 
-
 pub async fn live() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }
-
 
 pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
     match migrations::status(&state.pool).await {
@@ -28,3 +26,12 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
         }
     }
 }
+
+pub async fn openapi() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        OPENAPI,
+    )
+}
+
+const OPENAPI: &str = include_str!("../openapi.json");

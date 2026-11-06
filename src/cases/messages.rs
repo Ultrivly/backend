@@ -78,16 +78,26 @@ pub async fn list(
     .await?)
 }
 
+pub struct NewMessage<'a> {
+    pub case_id: Uuid,
+    pub visibility: &'a str,
+    pub body: &'a str,
+    pub body_format: Option<&'a str>,
+}
+
 pub async fn add(
     conn: &mut PgConnection,
     org_id: Uuid,
     actor: Actor,
-    case_id: Uuid,
-    visibility: &str,
-    body: &str,
-    body_format: Option<&str>,
+    new: NewMessage<'_>,
     cause: Cause,
 ) -> ServiceResult<Message> {
+    let NewMessage {
+        case_id,
+        visibility,
+        body,
+        body_format,
+    } = new;
     if !matches!(visibility, "public" | "internal") {
         return Err(invalid("visibility", "must be public or internal"));
     }
@@ -167,6 +177,9 @@ pub async fn add(
         cause,
     )
     .await?;
+    if visibility == "public" {
+        crate::channels::queue_email_reply(&mut tx, org_id, case_id, id).await?;
+    }
     let message = sqlx::query_as(concat!(message_select!(), " WHERE m.id = $1"))
         .bind(id)
         .fetch_one(&mut *tx)

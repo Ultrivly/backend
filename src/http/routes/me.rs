@@ -1,8 +1,3 @@
-
-
-
-
-
 use std::time::Duration;
 
 use axum::Json;
@@ -21,7 +16,6 @@ use crate::identity::sessions::{self, AuthMethod, Session};
 use crate::identity::{accounts, emails, mfa};
 use crate::worker;
 use webauthn_rs::prelude::RegisterPublicKeyCredential;
-
 
 const TOTP_ISSUER: &str = "Ultrivly";
 
@@ -131,8 +125,6 @@ pub async fn sign_out_others(
     Ok(Json(json!({ "signed_out": count })))
 }
 
-
-
 async fn reauthenticate_if_protected(
     state: &AppState,
     session: &Session,
@@ -191,7 +183,6 @@ pub async fn confirm_totp(
     .await?;
     Ok(Json(json!({ "recovery_codes": codes })))
 }
-
 
 #[derive(Deserialize)]
 pub struct Reauthentication {
@@ -257,8 +248,6 @@ pub struct VerifyRequest {
     code: String,
 }
 
-
-
 pub async fn verify_mfa(
     State(state): State<AppState>,
     Authenticated(session): Authenticated,
@@ -291,7 +280,6 @@ pub struct StartPasskeyRequest {
     #[serde(flatten)]
     proof: Reauthentication,
 }
-
 
 pub async fn start_passkey(
     State(state): State<AppState>,

@@ -1,25 +1,18 @@
-
-
-
-
-
-
-
-
-
-
-
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
+use bytes::Bytes;
+use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
 use object_store::prefix::PrefixStore;
-use object_store::{ObjectStore, ObjectStoreExt, PutPayload};
+use object_store::{ObjectStore, ObjectStoreExt, PutPayload, WriteMultipart};
 use url::Url;
+
+const UPLOAD_CHUNK: usize = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct BlobStore {
@@ -87,7 +80,6 @@ impl BlobStore {
         }
     }
 
-    
     pub async fn delete(&self, key: &str) -> object_store::Result<()> {
         match self.inner.delete(&Path::from(key)).await {
             Err(object_store::Error::NotFound { .. }) => Ok(()),
@@ -95,7 +87,6 @@ impl BlobStore {
         }
     }
 
-    
     pub async fn delete_prefix(&self, prefix: &str) -> object_store::Result<()> {
         let locations = self
             .inner
@@ -105,11 +96,42 @@ impl BlobStore {
         let mut results = self.inner.delete_stream(locations);
         while let Some(result) = results.next().await {
             match result {
-                
                 Ok(_) | Err(object_store::Error::NotFound { .. }) => {}
                 Err(err) => return Err(err),
             }
         }
         Ok(())
+    }
+
+    pub async fn put_file(&self, key: &str, path: &std::path::Path) -> anyhow::Result<u64> {
+        use std::io::Read;
+        let mut file = std::fs::File::open(path)?;
+        let upload = self.inner.put_multipart(&Path::from(key)).await?;
+        let mut writer = WriteMultipart::new_with_chunk_size(upload, UPLOAD_CHUNK);
+        let mut buffer = vec![0; UPLOAD_CHUNK];
+        let mut total = 0u64;
+        loop {
+            let read = match file.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(err) => {
+                    let _ = writer.abort().await;
+                    return Err(err.into());
+                }
+            };
+            total += read as u64;
+            writer.wait_for_capacity(4).await?;
+            writer.write(&buffer[..read]);
+        }
+        writer.finish().await?;
+        Ok(total)
+    }
+
+    pub async fn stream(
+        &self,
+        key: &str,
+    ) -> object_store::Result<(u64, BoxStream<'static, object_store::Result<Bytes>>)> {
+        let result = self.inner.get(&Path::from(key)).await?;
+        Ok((result.meta.size, result.into_stream()))
     }
 }

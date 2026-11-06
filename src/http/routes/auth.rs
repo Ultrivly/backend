@@ -1,8 +1,3 @@
-
-
-
-
-
 use std::time::Duration;
 
 use axum::Json;
@@ -43,7 +38,7 @@ pub async fn sign_up(
         .await
     {
         Ok(created) => emails::verify_email(email, &state.public_url, &created.verification_token),
-        
+
         Err(AuthError::EmailTaken) => emails::sign_up_attempted(email, &state.public_url),
         Err(err) => return Err(err.into()),
     };
@@ -72,8 +67,6 @@ pub async fn sign_in(
         accounts::sign_in_with_password(&mut conn, &body.email, &body.password, &client.0).await?;
     Ok(sign_in_response(&state, jar, outcome))
 }
-
-
 
 pub(crate) fn sign_in_response(
     state: &AppState,
@@ -107,7 +100,6 @@ fn signed_in(state: &AppState, jar: CookieJar, new: NewSession) -> impl IntoResp
 
 #[derive(Deserialize)]
 pub struct MfaRequest {
-    
     challenge: Option<String>,
     code: String,
 }
@@ -170,8 +162,7 @@ pub async fn forgot_password(
     Json(body): Json<ForgotPasswordRequest>,
 ) -> ApiResult<impl IntoResponse> {
     limit_ip(&state, &client, "forgot_password", 10, HOUR).await?;
-    
-    
+
     let mut conn = state.pool.acquire().await?;
     worker::enqueue_password_reset(&mut conn, &state.secrets, &body.email).await?;
     Ok((
@@ -203,8 +194,6 @@ pub async fn reset_password(
 pub struct PasskeyChallengeRequest {
     challenge: Option<String>,
 }
-
-
 
 pub async fn start_passkey_mfa(
     State(state): State<AppState>,
@@ -252,7 +241,6 @@ pub async fn finish_passkey_mfa(
         .await?;
     Ok(signed_in(&state, jar, new))
 }
-
 
 fn challenge_from(state: &AppState, jar: &CookieJar, body: Option<String>) -> ApiResult<String> {
     body.or_else(|| jar.get(state.cookies.mfa).map(|c| c.value().to_string()))

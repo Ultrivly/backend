@@ -1,8 +1,3 @@
-
-
-
-
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -35,7 +30,6 @@ mod common;
 use common::{create_org, member_with_role, role_id};
 
 const CLIENT_SECRET: &str = "connection-client-secret";
-
 
 struct PendingLogin {
     client_id: String,
@@ -139,8 +133,6 @@ async fn token(
 }
 
 fn sso_for(social: Vec<SocialProvider>) -> Sso {
-    
-    
     let http = HttpClient::new(NetPolicy::new(
         Deployment::SelfHosted,
         &["127.0.0.1".into()],
@@ -155,13 +147,11 @@ fn sso_for(social: Vec<SocialProvider>) -> Sso {
     .unwrap()
 }
 
-
 struct Person<'a> {
     subject: &'a str,
     email: &'a str,
     email_verified: bool,
 }
-
 
 async fn round_trip(
     pool: &PgPool,
@@ -249,7 +239,6 @@ async fn first_sign_in_provisions_a_member_with_the_default_role(pool: PgPool) {
     let connection =
         create_connection(&pool, &sso, &idp, org.org_id, owner, true, Some(agent_role)).await;
 
-    
     let stored: Vec<u8> =
         sqlx::query_scalar("SELECT client_secret_ciphertext FROM sso_connections WHERE id = $1")
             .bind(connection)
@@ -281,7 +270,6 @@ async fn first_sign_in_provisions_a_member_with_the_default_role(pool: PgPool) {
         }
     );
 
-    
     let mut conn = pool.acquire().await.unwrap();
     let held = ultrivly::platform::authz::effective_permissions(&mut conn, org.org_id, user, None)
         .await
@@ -298,7 +286,6 @@ async fn first_sign_in_provisions_a_member_with_the_default_role(pool: PgPool) {
         Ok(())
     );
 
-    
     let again = Person {
         subject: "alice-123",
         email: "alice@acme.test",
@@ -335,7 +322,6 @@ async fn sign_in_states_are_single_use_and_bound_to_the_nonce(pool: PgPool) {
         .into_owned()
         .collect();
 
-    
     idp.state.pending.lock().unwrap().insert(
         "code-1".into(),
         PendingLogin {
@@ -352,14 +338,12 @@ async fn sign_in_states_are_single_use_and_bound_to_the_nonce(pool: PgPool) {
         .unwrap_err();
     assert!(matches!(err, SsoError::Provider(_)), "{err}");
 
-    
     let err = sso
         .complete(&mut conn, &query["state"], "code-2", &ClientInfo::default())
         .await
         .unwrap_err();
     assert!(matches!(err, SsoError::InvalidState), "{err}");
 
-    
     let err = sso
         .begin(
             &mut conn,
@@ -405,7 +389,6 @@ async fn domains_and_provisioning_settings_are_enforced(pool: PgPool) {
     .unwrap_err();
     assert!(matches!(err, SsoError::EmailDomainNotAllowed), "{err}");
 
-    
     let newcomer = Person {
         subject: "dave",
         email: "dave@acme.test",
@@ -429,7 +412,6 @@ async fn domains_and_provisioning_settings_are_enforced(pool: PgPool) {
             .unwrap();
     assert_eq!(users, 0);
 
-    
     let mut conn = pool.acquire().await.unwrap();
     sso.update_connection(
         &mut conn,
@@ -466,14 +448,13 @@ async fn existing_accounts_are_linked_only_by_their_owner(pool: PgPool) {
         )
         .await
         .unwrap();
-        
+
         accounts::verify_email(&mut conn, &signup.verification_token)
             .await
             .unwrap();
         signup.user_id
     };
 
-    
     let claimed = Person {
         subject: "carol-idp",
         email: "carol@acme.test",
@@ -491,7 +472,6 @@ async fn existing_accounts_are_linked_only_by_their_owner(pool: PgPool) {
     .unwrap_err();
     assert!(matches!(err, SsoError::AccountExists), "{err}");
 
-    
     let link = Person {
         subject: "carol-idp",
         email: "carol@acme.test",
@@ -509,7 +489,6 @@ async fn existing_accounts_are_linked_only_by_their_owner(pool: PgPool) {
     .unwrap();
     assert!(matches!(outcome, SsoOutcome::Linked { user_id, .. } if user_id == carol));
 
-    
     let again = Person {
         subject: "carol-idp",
         email: "carol@acme.test",
@@ -527,13 +506,12 @@ async fn existing_accounts_are_linked_only_by_their_owner(pool: PgPool) {
     .unwrap();
     assert_eq!(signed_in_user(outcome).0, carol);
 
-    
     let someone = {
         let signup =
             accounts::sign_up(&mut conn, "else@acme.test", "Else", "another long password")
                 .await
                 .unwrap();
-        
+
         accounts::verify_email(&mut conn, &signup.verification_token)
             .await
             .unwrap();
@@ -570,7 +548,6 @@ async fn social_sign_in_trusts_only_verified_emails(pool: PgPool) {
     let sso = sso_for(vec![google]);
     let mut conn = pool.acquire().await.unwrap();
 
-    
     let pat = Person {
         subject: "g-pat",
         email: "pat@gmail.test",
@@ -590,7 +567,6 @@ async fn social_sign_in_trusts_only_verified_emails(pool: PgPool) {
             .unwrap();
     assert!(verified);
 
-    
     let signup = accounts::sign_up(&mut conn, "lee@gmail.test", "Lee", "lee's long password")
         .await
         .unwrap();
@@ -609,7 +585,6 @@ async fn social_sign_in_trusts_only_verified_emails(pool: PgPool) {
     );
     assert_eq!(lee_id, signup.user_id);
 
-    
     accounts::sign_up(&mut conn, "kim@gmail.test", "Kim", "kim's long password")
         .await
         .unwrap();
@@ -655,12 +630,7 @@ async fn managing_connections_needs_security_manage_and_a_safe_issuer(pool: PgPo
         .unwrap_err();
     assert!(matches!(err, SsoError::Forbidden), "{err}");
 
-    
-    for issuer in [
-        "https://",
-        "http://",
-        "https://[::1]/",
-    ] {
+    for issuer in ["https://", "http://", "https://[::1]/"] {
         let err = sso
             .create_connection(&mut conn, org.org_id, Actor::User(owner), new(issuer))
             .await

@@ -1,6 +1,3 @@
-
-
-
 use std::future::Future;
 use std::time::{Duration, Instant};
 
@@ -8,14 +5,15 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 
 use crate::identity::{accounts, emails};
-use crate::platform::blob::BlobStore;
 use crate::integrations::webhooks;
+use crate::platform::blob::BlobStore;
 use crate::platform::deletion;
-use crate::platform::net::HttpClient;
 use crate::platform::jobs::{self, ClaimedJob, NewJob};
-use crate::platform::mail::{Email, Mailer};
+use crate::platform::mail::{self, Email, Mailer};
+use crate::platform::net::HttpClient;
 use crate::platform::rate_limit::{self, Decision};
 use crate::platform::secrets::{Secrets, token_hash};
+use crate::platform::telemetry;
 
 pub const SEND_EMAIL: &str = "email.send";
 pub const PASSWORD_RESET: &str = "auth.password_reset";
@@ -25,7 +23,6 @@ const LEASE_CHECK_EVERY: Duration = Duration::from_secs(60);
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(15 * 60);
 
 const RESETS_PER_HOUR: i32 = 3;
-
 
 pub async fn enqueue_email(
     conn: &mut PgConnection,
@@ -40,9 +37,6 @@ pub async fn enqueue_email(
     jobs::enqueue(conn, NewJob::new(SEND_EMAIL, payload)).await?;
     Ok(())
 }
-
-
-
 
 pub async fn enqueue_password_reset(
     conn: &mut PgConnection,
@@ -69,7 +63,7 @@ pub struct Worker {
     pub secrets: Secrets,
     pub mailer: Mailer,
     pub public_url: String,
-    
+
     pub blobs: Option<BlobStore>,
     pub http: HttpClient,
     pub id: String,
@@ -84,8 +78,14 @@ impl Worker {
         loop {
             if last_lease_check.elapsed() >= LEASE_CHECK_EVERY {
                 last_lease_check = Instant::now();
+                if let Err(err) = crate::cases::settings::mark_breaches(&self.pool).await {
+                    tracing::warn!("checking SLA breaches failed: {err}");
+                }
                 if let Err(err) = jobs::release_expired_leases(&self.pool).await {
                     tracing::warn!("releasing expired job leases failed: {err}");
+                }
+                if let Err(err) = telemetry::record_queue(&self.pool).await {
+                    tracing::warn!("recording queue metrics failed: {err}");
                 }
             }
             if last_housekeeping.elapsed() >= HOUSEKEEPING_EVERY {
@@ -110,17 +110,30 @@ impl Worker {
         tracing::info!(worker = %self.id, "worker stopped");
     }
 
-    
     pub async fn run_once(&self) -> anyhow::Result<bool> {
         let dispatched = webhooks::dispatch_events(&self.pool).await?;
         let Some(job) = jobs::claim(&self.pool, &self.id).await? else {
             return Ok(dispatched > 0);
         };
+        let started = Instant::now();
         match self.handle(&job).await {
-            Ok(()) => jobs::succeed(&self.pool, job.id).await?,
+            Ok(()) => {
+                jobs::succeed(&self.pool, job.id).await?;
+                telemetry::job_finished(&job.kind, "succeeded", started.elapsed());
+            }
             Err(err) => {
-                tracing::warn!(job = %job.id, kind = %job.kind, attempt = job.attempt, "job failed: {err:#}");
+                let dead = job.attempt >= job.max_attempts;
+                if dead {
+                    tracing::error!(job = %job.id, kind = %job.kind, attempt = job.attempt, "job failed permanently: {err:#}");
+                } else {
+                    tracing::warn!(job = %job.id, kind = %job.kind, attempt = job.attempt, "job failed: {err:#}");
+                }
                 jobs::fail(&self.pool, &job, &format!("{err:#}")).await?;
+                telemetry::job_finished(
+                    &job.kind,
+                    if dead { "dead" } else { "retrying" },
+                    started.elapsed(),
+                );
             }
         }
         Ok(true)
@@ -131,7 +144,8 @@ impl Worker {
             SEND_EMAIL => {
                 let email: Email =
                     serde_json::from_value(jobs::unseal(&self.secrets, SEND_EMAIL, &job.payload)?)?;
-                self.mailer.send(&email).await
+                mail::send_checked(&self.pool, &self.mailer, &email).await?;
+                Ok(())
             }
             PASSWORD_RESET => {
                 let payload = jobs::unseal(&self.secrets, PASSWORD_RESET, &job.payload)?;
@@ -146,11 +160,21 @@ impl Worker {
                 let mut conn = self.pool.acquire().await?;
                 if let Some((_, token)) = accounts::request_password_reset(&mut conn, email).await?
                 {
-                    self.mailer
-                        .send(&emails::password_reset(email, &self.public_url, &token))
-                        .await?;
+                    mail::send_checked(
+                        &self.pool,
+                        &self.mailer,
+                        &emails::password_reset(email, &self.public_url, &token),
+                    )
+                    .await?;
                 }
                 Ok(())
+            }
+            crate::channels::EMAIL_REPLY => {
+                let id = job.payload["message_id"]
+                    .as_str()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| anyhow::anyhow!("invalid email reply job"))?;
+                crate::channels::send_email_reply(&self.pool, &self.secrets, &self.mailer, id).await
             }
             webhooks::DELIVER => {
                 let id = job.payload["delivery_id"]
@@ -164,18 +188,31 @@ impl Worker {
                     .as_str()
                     .and_then(|s| s.parse().ok())
                     .ok_or_else(|| anyhow::anyhow!("invalid workflow job"))?;
-                crate::workflows::evaluate(&self.pool, id).await
+                crate::workflows::evaluate(&self.pool, &self.secrets, id).await
+            }
+            crate::exports::BUILD => {
+                let blobs = self
+                    .blobs
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("this worker has no file storage configured"))?;
+                crate::exports::build(&self.pool, blobs, &job.payload).await
+            }
+            crate::plugins::RUN_ACTION => {
+                crate::plugins::run_job(&self.pool, &self.http, &self.secrets, &job.payload).await
             }
             other => anyhow::bail!("unknown job kind {other:?}"),
         }
     }
 
-    
     pub async fn housekeeping(&self) {
         for (what, sql) in [
             (
                 "auth tokens",
                 "DELETE FROM auth_tokens WHERE expires_at < now()",
+            ),
+            (
+                "chat sessions",
+                "DELETE FROM chat_sessions WHERE expires_at < now()",
             ),
             (
                 "SAML requests",
@@ -202,6 +239,27 @@ impl Worker {
                 "DELETE FROM jobs WHERE state = 'succeeded' AND finished_at < now() - interval '7 days'",
             ),
             (
+                "dead jobs",
+                "DELETE FROM jobs WHERE state = 'dead' AND finished_at < now() - interval '30 days'",
+            ),
+            (
+                "ended sessions",
+                "DELETE FROM sessions WHERE expires_at < now() - interval '7 days'
+                    OR revoked_at < now() - interval '7 days'",
+            ),
+            (
+                "dispatched domain events",
+                "DELETE FROM domain_events WHERE dispatched_at < now() - interval '30 days'",
+            ),
+            (
+                "old webhook deliveries",
+                "DELETE FROM webhook_deliveries WHERE status <> 'pending' AND created_at < now() - interval '30 days'",
+            ),
+            (
+                "old workflow runs",
+                "DELETE FROM workflow_runs WHERE created_at < now() - interval '90 days'",
+            ),
+            (
                 "idempotency keys",
                 "DELETE FROM idempotency_keys WHERE expires_at < now()",
             ),
@@ -212,6 +270,9 @@ impl Worker {
         }
         if let Err(err) = rate_limit::delete_old_windows(&self.pool).await {
             tracing::warn!("cleaning up rate limits failed: {err}");
+        }
+        if let Err(err) = crate::exports::expire(&self.pool).await {
+            tracing::warn!("removing expired exports failed: {err}");
         }
         if let Some(blobs) = &self.blobs {
             match deletion::purge_due(&self.pool, blobs).await {

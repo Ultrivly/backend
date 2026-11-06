@@ -1,13 +1,11 @@
-
-
 CREATE TABLE invitations (
     id           uuid PRIMARY KEY,
     org_id       uuid NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
     email        text NOT NULL,
     role_id      uuid NOT NULL,
-    
+
     workspace_id uuid,
-    
+
     token_hash   bytea NOT NULL UNIQUE CHECK (length(token_hash) = 32),
     invited_by   uuid REFERENCES users (id) ON DELETE SET NULL,
     created_at   timestamptz NOT NULL DEFAULT now(),
@@ -20,11 +18,8 @@ CREATE TABLE invitations (
     FOREIGN KEY (org_id, workspace_id) REFERENCES workspaces (org_id, id) ON DELETE CASCADE
 );
 
-
 CREATE UNIQUE INDEX invitations_open_key ON invitations (org_id, lower(email))
     WHERE accepted_at IS NULL AND revoked_at IS NULL;
-
-
 
 CREATE TABLE rate_limits (
     key          text NOT NULL,

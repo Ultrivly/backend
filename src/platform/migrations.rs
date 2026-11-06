@@ -1,7 +1,3 @@
-
-
-
-
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -11,13 +7,9 @@ use sqlx::migrate::Migrator;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 
-
 const MIGRATIONS_TABLE: &str = "_sqlx_migrations";
 
-
 const MIN_SERVER_VERSION_NUM: i32 = 150_000;
-
-
 
 pub async fn run(pool: &PgPool) -> anyhow::Result<()> {
     check_server_version(pool).await?;
@@ -67,8 +59,6 @@ pub async fn run(pool: &PgPool) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
-
 
 pub async fn status(pool: &PgPool) -> anyhow::Result<Status> {
     let table_exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
@@ -127,9 +117,9 @@ async fn check_server_version(pool: &PgPool) -> anyhow::Result<()> {
 pub enum State {
     Applied,
     Pending,
-    
+
     ChecksumMismatch,
-    
+
     Failed,
 }
 
@@ -141,12 +131,11 @@ pub struct Entry {
 
 pub struct Status {
     pub entries: Vec<Entry>,
-    
+
     pub unknown_applied: Vec<i64>,
 }
 
 impl Status {
-    
     pub fn is_current(&self) -> bool {
         self.unknown_applied.is_empty() && self.entries.iter().all(|m| m.state == State::Applied)
     }

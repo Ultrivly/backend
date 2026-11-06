@@ -1,7 +1,3 @@
-
-
-
-
 CREATE TABLE contacts (
     id           uuid PRIMARY KEY,
     org_id       uuid NOT NULL REFERENCES organizations (id),
@@ -18,8 +14,6 @@ CREATE UNIQUE INDEX contacts_user_key ON contacts (org_id, user_id) WHERE user_i
 
 CREATE TRIGGER contacts_updated_at BEFORE UPDATE ON contacts
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-
 
 CREATE TABLE case_statuses (
     id          uuid PRIMARY KEY,
@@ -41,7 +35,7 @@ CREATE TABLE case_priorities (
     org_id      uuid NOT NULL REFERENCES organizations (id),
     key         text NOT NULL CHECK (key ~ '^[a-z][a-z0-9_]*$'),
     label       text NOT NULL,
-    
+
     rank        integer NOT NULL,
     is_default  boolean NOT NULL DEFAULT false,
     created_at  timestamptz NOT NULL DEFAULT now(),
@@ -50,8 +44,6 @@ CREATE TABLE case_priorities (
 );
 
 CREATE UNIQUE INDEX case_priorities_one_default ON case_priorities (org_id) WHERE is_default;
-
-
 
 CREATE TABLE case_number_counters (
     org_id      uuid PRIMARY KEY REFERENCES organizations (id),
@@ -71,7 +63,7 @@ CREATE TABLE cases (
     tags                 text[] NOT NULL DEFAULT '{}',
     requester_contact_id uuid NOT NULL,
     team_id              uuid,
-    
+
     assignee_user_id     uuid,
     source_channel       text NOT NULL CHECK (source_channel IN ('web', 'email', 'chat', 'api', 'social')),
     first_response_at    timestamptz,
@@ -92,7 +84,6 @@ CREATE TABLE cases (
     FOREIGN KEY (org_id, assignee_user_id) REFERENCES memberships (org_id, user_id)
 );
 
-
 CREATE INDEX cases_workspace_created_idx ON cases (org_id, workspace_id, created_at DESC);
 CREATE INDEX cases_status_idx ON cases (org_id, status_id);
 CREATE INDEX cases_assignee_idx ON cases (org_id, assignee_user_id) WHERE assignee_user_id IS NOT NULL;
@@ -103,7 +94,6 @@ CREATE INDEX cases_search_idx ON cases USING gin (search_vector);
 
 CREATE TRIGGER cases_updated_at BEFORE UPDATE ON cases
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
 
 CREATE TABLE case_messages (
     id                  uuid PRIMARY KEY,
@@ -116,7 +106,7 @@ CREATE TABLE case_messages (
     body                text NOT NULL,
     body_format         text NOT NULL DEFAULT 'markdown' CHECK (body_format IN ('text', 'markdown', 'html')),
     source_channel      text NOT NULL CHECK (source_channel IN ('web', 'email', 'chat', 'api', 'social')),
-    
+
     external_message_id text,
     created_at          timestamptz NOT NULL DEFAULT now(),
     edited_at           timestamptz,
@@ -125,14 +115,13 @@ CREATE TABLE case_messages (
     FOREIGN KEY (org_id, author_contact_id) REFERENCES contacts (org_id, id),
     CHECK ((author_kind = 'user') = (author_user_id IS NOT NULL)),
     CHECK ((author_kind = 'contact') = (author_contact_id IS NOT NULL)),
-    
+
     CHECK (NOT (author_kind = 'contact' AND visibility = 'internal'))
 );
 
 CREATE INDEX case_messages_case_idx ON case_messages (org_id, case_id, created_at);
 CREATE UNIQUE INDEX case_messages_external_id_key ON case_messages (org_id, source_channel, external_message_id)
     WHERE external_message_id IS NOT NULL;
-
 
 CREATE TABLE case_events (
     id          uuid PRIMARY KEY,
@@ -157,7 +146,7 @@ CREATE TABLE attachments (
     content_type text NOT NULL,
     size_bytes   bigint NOT NULL CHECK (size_bytes >= 0),
     sha256       bytea NOT NULL CHECK (length(sha256) = 32),
-    
+
     storage_key  text NOT NULL UNIQUE CHECK (storage_key LIKE 'org/' || org_id::text || '/%'),
     created_at   timestamptz NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),

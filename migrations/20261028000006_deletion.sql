@@ -1,14 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
 ALTER TABLE organizations
     ADD COLUMN deleted_at  timestamptz,
     ADD COLUMN purge_after timestamptz,
@@ -33,8 +22,6 @@ CREATE INDEX organizations_purge_idx ON organizations (purge_after) WHERE purge_
 CREATE INDEX workspaces_purge_idx ON workspaces (purge_after) WHERE purge_after IS NOT NULL;
 CREATE INDEX cases_purge_idx ON cases (purge_after) WHERE purge_after IS NOT NULL;
 CREATE INDEX attachments_purge_idx ON attachments (purge_after) WHERE purge_after IS NOT NULL;
-
-
 
 ALTER TABLE workspaces DROP CONSTRAINT workspaces_org_id_fkey,
     ADD CONSTRAINT workspaces_org_id_fkey FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE;
@@ -63,13 +50,10 @@ ALTER TABLE jobs DROP CONSTRAINT jobs_org_id_fkey,
 ALTER TABLE domain_events DROP CONSTRAINT domain_events_org_id_fkey,
     ADD CONSTRAINT domain_events_org_id_fkey FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE;
 
-
 ALTER TABLE audit_events DROP CONSTRAINT audit_events_org_id_fkey,
     ADD CONSTRAINT audit_events_org_id_fkey FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE;
 ALTER TABLE idempotency_keys DROP CONSTRAINT idempotency_keys_org_id_fkey,
     ADD CONSTRAINT idempotency_keys_org_id_fkey FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE;
-
-
 
 ALTER TABLE teams DROP CONSTRAINT teams_org_id_workspace_id_fkey,
     ADD CONSTRAINT teams_org_id_workspace_id_fkey FOREIGN KEY (org_id, workspace_id)
@@ -80,8 +64,6 @@ ALTER TABLE queues DROP CONSTRAINT queues_org_id_workspace_id_fkey,
 ALTER TABLE cases DROP CONSTRAINT cases_org_id_workspace_id_fkey,
     ADD CONSTRAINT cases_org_id_workspace_id_fkey FOREIGN KEY (org_id, workspace_id)
         REFERENCES workspaces (org_id, id) ON DELETE CASCADE;
-
-
 
 ALTER TABLE case_messages DROP CONSTRAINT case_messages_org_id_case_id_fkey,
     ADD CONSTRAINT case_messages_org_id_case_id_fkey FOREIGN KEY (org_id, case_id)
@@ -96,10 +78,6 @@ ALTER TABLE attachments DROP CONSTRAINT attachments_org_id_message_id_fkey,
     ADD CONSTRAINT attachments_org_id_message_id_fkey FOREIGN KEY (org_id, message_id)
         REFERENCES case_messages (org_id, id) ON DELETE CASCADE;
 
-
-
-
-
 ALTER TABLE teams DROP CONSTRAINT teams_org_id_department_id_fkey,
     ADD CONSTRAINT teams_org_id_department_id_fkey FOREIGN KEY (org_id, department_id)
         REFERENCES departments (org_id, id) ON DELETE SET NULL (department_id);
@@ -112,12 +90,6 @@ ALTER TABLE cases DROP CONSTRAINT cases_org_id_team_id_fkey,
 ALTER TABLE cases DROP CONSTRAINT cases_org_id_assignee_user_id_fkey,
     ADD CONSTRAINT cases_org_id_assignee_user_id_fkey FOREIGN KEY (org_id, assignee_user_id)
         REFERENCES memberships (org_id, user_id) ON DELETE SET NULL (assignee_user_id);
-
-
-
-
-
-
 
 ALTER TABLE cases DROP CONSTRAINT cases_org_id_status_id_fkey,
     ADD CONSTRAINT cases_org_id_status_id_fkey FOREIGN KEY (org_id, status_id)
@@ -132,14 +104,9 @@ ALTER TABLE case_messages DROP CONSTRAINT case_messages_org_id_author_contact_id
     ADD CONSTRAINT case_messages_org_id_author_contact_id_fkey FOREIGN KEY (org_id, author_contact_id)
         REFERENCES contacts (org_id, id) DEFERRABLE INITIALLY IMMEDIATE;
 
-
-
-
-
-
 CREATE TABLE blob_deletions (
     id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    
+
     storage_key     text NOT NULL,
     is_prefix       boolean NOT NULL DEFAULT false,
     attempts        integer NOT NULL DEFAULT 0,

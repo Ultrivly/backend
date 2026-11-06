@@ -1,6 +1,3 @@
-
-
-
 use axum::http::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -54,7 +51,6 @@ async fn responses_never_reveal_whether_an_account_exists(pool: PgPool) {
     let app = App::new(pool).await;
     app.sign_up_and_verify("sam@example.com").await;
 
-    
     let reply = app
         .call(
             Method::POST,
@@ -65,13 +61,11 @@ async fn responses_never_reveal_whether_an_account_exists(pool: PgPool) {
         .await;
     assert_eq!(reply.status, StatusCode::ACCEPTED);
     assert_eq!(reply.body, json!({ "status": "check_your_email" }));
-    
+
     let emails = app.deliver().await;
     assert_eq!(emails.len(), 1);
     assert!(emails[0].subject.contains("tried to sign up"));
 
-    
-    
     for email in ["sam@example.com", "nobody@example.com"] {
         let reply = app
             .call(
@@ -88,7 +82,6 @@ async fn responses_never_reveal_whether_an_account_exists(pool: PgPool) {
     assert_eq!(emails.len(), 1);
     assert_eq!(emails[0].to, "sam@example.com");
 
-    
     let token = token_in(&emails, "sam@example.com");
     let reset = |token: String| {
         app.call(
@@ -106,7 +99,6 @@ async fn responses_never_reveal_whether_an_account_exists(pool: PgPool) {
             .contains("password was changed")
     );
 
-    
     app.call(
         Method::POST,
         "/api/v1/auth/forgot-password",
@@ -130,7 +122,6 @@ async fn cross_site_requests_are_refused(pool: PgPool) {
     app.sign_up_and_verify("sam@example.com").await;
     let token = app.sign_in("sam@example.com").await;
 
-    
     let reply = app
         .raw(
             Method::POST,
@@ -143,7 +134,6 @@ async fn cross_site_requests_are_refused(pool: PgPool) {
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
     assert_eq!(reply.body["error"]["code"], "cross_site_request");
 
-    
     let reply = app
         .raw(
             Method::POST,
@@ -155,7 +145,6 @@ async fn cross_site_requests_are_refused(pool: PgPool) {
         .await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
 
-    
     let reply = app
         .raw(
             Method::POST,
@@ -167,7 +156,6 @@ async fn cross_site_requests_are_refused(pool: PgPool) {
         .await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
 
-    
     let reply = app
         .call(
             Method::POST,
@@ -232,7 +220,6 @@ async fn sign_in_is_rate_limited_per_ip(pool: PgPool) {
     assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
     assert!(limited.headers.contains_key(header::RETRY_AFTER));
 
-    
     let other = App::with_ip(pool, [198, 51, 100, 20]).await;
     assert_eq!(attempt(&other).await.status, StatusCode::UNAUTHORIZED);
 }
@@ -266,7 +253,6 @@ async fn mfa_sign_in_and_reauthentication(pool: PgPool) {
         10
     );
 
-    
     let reply = app
         .call(
             Method::POST,
@@ -289,7 +275,6 @@ async fn mfa_sign_in_and_reauthentication(pool: PgPool) {
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
     let mfa_token = reply.cookie_value(SESSION).unwrap();
 
-    
     let reply = app
         .call(
             Method::POST,
@@ -357,7 +342,6 @@ async fn invitations_flow(pool: PgPool) {
     let listed = app.call(Method::GET, &path, None, Some(&owner_token)).await;
     assert_eq!(listed.body["invitations"].as_array().unwrap().len(), 1);
 
-    
     app.sign_up_and_verify("other@acme.test").await;
     let other = app.sign_in("other@acme.test").await;
     let reply = app
@@ -371,7 +355,6 @@ async fn invitations_flow(pool: PgPool) {
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
     assert_eq!(reply.body["error"]["code"], "invitation_wrong_account");
 
-    
     app.sign_up_and_verify("new@acme.test").await;
     let newcomer = app.sign_in("new@acme.test").await;
     let reply = app
@@ -388,7 +371,6 @@ async fn invitations_flow(pool: PgPool) {
         .await;
     assert_eq!(me.body["user"]["organizations"][0]["slug"], "acme");
 
-    
     let reply = app
         .call(
             Method::POST,
@@ -399,7 +381,6 @@ async fn invitations_flow(pool: PgPool) {
         .await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
 
-    
     sqlx::query("UPDATE organizations SET require_mfa = true WHERE id = $1")
         .bind(org.org_id)
         .execute(&pool)
@@ -413,7 +394,7 @@ async fn invitations_flow(pool: PgPool) {
 #[sqlx::test]
 async fn sso_callback_requires_the_browser_that_started_it(pool: PgPool) {
     let app = App::new(pool).await;
-    
+
     let reply = app
         .call(
             Method::GET,
@@ -442,7 +423,6 @@ async fn passkeys_as_a_second_factor(pool: PgPool) {
     let origin: url::Url = ORIGIN.parse().unwrap();
     let mut authenticator = WebauthnAuthenticator::new(SoftPasskey::new(true));
 
-    
     let start = app
         .call(
             Method::POST,
@@ -468,7 +448,6 @@ async fn passkeys_as_a_second_factor(pool: PgPool) {
     assert_eq!(finish.status, StatusCode::OK, "{}", finish.body);
     assert_eq!(finish.body["recovery_codes"].as_array().unwrap().len(), 10);
 
-    
     let reply = app
         .call(
             Method::POST,
@@ -479,7 +458,6 @@ async fn passkeys_as_a_second_factor(pool: PgPool) {
         .await;
     assert_eq!(reply.body["error"]["code"], "reauthentication_required");
 
-    
     let signed = app
         .call(
             Method::POST,
@@ -510,7 +488,6 @@ async fn passkeys_as_a_second_factor(pool: PgPool) {
         }
     };
 
-    
     let (_, options) = begin(challenge.clone()).await;
     assert!(
         authenticator
@@ -518,8 +495,6 @@ async fn passkeys_as_a_second_factor(pool: PgPool) {
             .is_err()
     );
 
-    
-    
     let (first_ceremony, options) = begin(challenge.clone()).await;
     let assertion = authenticator.do_authentication(origin, options).unwrap();
     let (other_ceremony, _) = begin(challenge.clone()).await;
@@ -534,7 +509,6 @@ async fn passkeys_as_a_second_factor(pool: PgPool) {
     assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{}", reply.body);
     assert_eq!(reply.body["error"]["code"], "invalid_code");
 
-    
     let answer =
         json!({ "challenge": challenge, "ceremony_id": first_ceremony, "credential": assertion });
     let reply = app
@@ -548,7 +522,6 @@ async fn passkeys_as_a_second_factor(pool: PgPool) {
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
     assert!(reply.cookie_value(SESSION).is_some());
 
-    
     let replay = app
         .call(
             Method::POST,
@@ -565,4 +538,41 @@ async fn passkeys_as_a_second_factor(pool: PgPool) {
         .await;
     assert_eq!(listed.body["passkeys"][0]["label"], "Laptop");
     assert!(!listed.body["passkeys"][0]["last_used_at"].is_null());
+}
+
+#[sqlx::test]
+async fn api_requests_are_throttled_per_caller(pool: PgPool) {
+    let app = App::with_limits(
+        pool,
+        ultrivly::http::throttle::Limits {
+            per_caller: 5,
+            per_ip: 0,
+        },
+    )
+    .await;
+    app.sign_up_and_verify("busy@acme.test").await;
+    let session = app.sign_in("busy@acme.test").await;
+    let mut statuses = Vec::new();
+    for _ in 0..8 {
+        statuses.push(
+            app.call(Method::GET, "/api/v1/me", None, Some(&session))
+                .await
+                .status,
+        );
+    }
+    assert!(
+        statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
+        "{statuses:?}"
+    );
+    let limited = app
+        .call(Method::GET, "/api/v1/me", None, Some(&session))
+        .await;
+    assert!(limited.headers.contains_key("retry-after"));
+    assert_eq!(limited.body["error"]["code"], "rate_limited");
+    for _ in 0..20 {
+        assert_eq!(
+            app.call(Method::GET, "/healthz", None, None).await.status,
+            StatusCode::OK
+        );
+    }
 }

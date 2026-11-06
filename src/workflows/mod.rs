@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sqlx::{Connection, PgConnection, PgPool};
 use uuid::Uuid;
 
@@ -12,6 +12,7 @@ use crate::platform::authz::{self, Permission};
 use crate::platform::error::{ServiceError, ServiceResult, invalid, text};
 use crate::platform::events::{self, Cause, MAX_DEPTH};
 use crate::platform::page::Page;
+use crate::platform::secrets::Secrets;
 
 const MAX_RUNS_PER_HOUR: i64 = 1000;
 
@@ -23,6 +24,7 @@ pub enum Trigger {
     CaseStatusChanged,
     CaseAssigned,
     CaseMessageAdded,
+    CaseSlaBreached,
 }
 
 impl Trigger {
@@ -33,6 +35,7 @@ impl Trigger {
             Trigger::CaseStatusChanged => "case.status_changed",
             Trigger::CaseAssigned => "case.assigned",
             Trigger::CaseMessageAdded => "case.message_added",
+            Trigger::CaseSlaBreached => "case.sla_breached",
         }
     }
 }
@@ -74,13 +77,33 @@ pub struct Condition {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
-    SetStatus { status: String },
-    SetPriority { priority: String },
-    AddTags { tags: Vec<String> },
-    RemoveTags { tags: Vec<String> },
-    AssignTeam { team_id: Option<Uuid> },
-    AssignUser { user_id: Option<Uuid> },
-    AddNote { body: String },
+    SetStatus {
+        status: String,
+    },
+    SetPriority {
+        priority: String,
+    },
+    AddTags {
+        tags: Vec<String>,
+    },
+    RemoveTags {
+        tags: Vec<String>,
+    },
+    AssignTeam {
+        team_id: Option<Uuid>,
+    },
+    AssignUser {
+        user_id: Option<Uuid>,
+    },
+    AddNote {
+        body: String,
+    },
+    Plugin {
+        install_id: Uuid,
+        action: String,
+        #[serde(default)]
+        input: Map<String, Value>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,12 +126,18 @@ impl Definition {
         for condition in &self.conditions {
             let needs_value = !matches!(condition.op, Op::IsEmpty | Op::IsNotEmpty);
             let ok = match condition.op {
-                Op::In => condition.value.as_array().is_some_and(|a| !a.is_empty() && a.len() <= 50),
+                Op::In => condition
+                    .value
+                    .as_array()
+                    .is_some_and(|a| !a.is_empty() && a.len() <= 50),
                 _ if needs_value => condition.value.is_string(),
                 _ => true,
             };
             if !ok {
-                return Err(invalid("definition", "has a condition with an invalid value"));
+                return Err(invalid(
+                    "definition",
+                    "has a condition with an invalid value",
+                ));
             }
         }
         for action in &self.actions {
@@ -116,8 +145,13 @@ impl Definition {
                 Action::AddTags { tags } | Action::RemoveTags { tags } => {
                     normalize_tags(tags)?;
                 }
-                Action::AddNote { body } if body.trim().is_empty() || body.chars().count() > 10_000 => {
-                    return Err(invalid("definition", "has a note that is empty or too long"));
+                Action::AddNote { body }
+                    if body.trim().is_empty() || body.chars().count() > 10_000 =>
+                {
+                    return Err(invalid(
+                        "definition",
+                        "has a note that is empty or too long",
+                    ));
                 }
                 _ => {}
             }
@@ -139,7 +173,17 @@ pub struct Workflow {
     pub updated_at: DateTime<Utc>,
 }
 
-type WorkflowRow = (Uuid, Option<Uuid>, String, bool, Option<Uuid>, i32, Value, DateTime<Utc>, DateTime<Utc>);
+type WorkflowRow = (
+    Uuid,
+    Option<Uuid>,
+    String,
+    bool,
+    Option<Uuid>,
+    i32,
+    Value,
+    DateTime<Utc>,
+    DateTime<Utc>,
+);
 
 macro_rules! workflow_select {
     () => {
@@ -152,7 +196,17 @@ macro_rules! workflow_select {
 }
 
 fn workflow_from(row: WorkflowRow) -> ServiceResult<Workflow> {
-    let (id, workspace_id, name, enabled, published_version_id, latest_version, definition, created_at, updated_at) = row;
+    let (
+        id,
+        workspace_id,
+        name,
+        enabled,
+        published_version_id,
+        latest_version,
+        definition,
+        created_at,
+        updated_at,
+    ) = row;
     Ok(Workflow {
         id,
         workspace_id,
@@ -166,65 +220,102 @@ fn workflow_from(row: WorkflowRow) -> ServiceResult<Workflow> {
     })
 }
 
-pub async fn list(conn: &mut PgConnection, org_id: Uuid, actor: Actor) -> ServiceResult<Vec<Workflow>> {
+pub async fn list(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+) -> ServiceResult<Vec<Workflow>> {
     authz::require(conn, org_id, actor, Permission::WorkflowsManage).await?;
-    let rows: Vec<WorkflowRow> = sqlx::query_as(concat!(workflow_select!(), " WHERE w.org_id = $1 ORDER BY w.name"))
-        .bind(org_id)
-        .fetch_all(conn)
-        .await?;
+    let rows: Vec<WorkflowRow> = sqlx::query_as(concat!(
+        workflow_select!(),
+        " WHERE w.org_id = $1 ORDER BY w.name"
+    ))
+    .bind(org_id)
+    .fetch_all(conn)
+    .await?;
     rows.into_iter().map(workflow_from).collect()
 }
 
-pub async fn get(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uuid) -> ServiceResult<Workflow> {
+pub async fn get(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    id: Uuid,
+) -> ServiceResult<Workflow> {
     authz::require(conn, org_id, actor, Permission::WorkflowsManage).await?;
     load(conn, org_id, id).await
 }
 
 async fn load(conn: &mut PgConnection, org_id: Uuid, id: Uuid) -> ServiceResult<Workflow> {
-    let row: WorkflowRow = sqlx::query_as(concat!(workflow_select!(), " WHERE w.org_id = $1 AND w.id = $2"))
-        .bind(org_id)
-        .bind(id)
-        .fetch_optional(conn)
-        .await?
-        .ok_or(ServiceError::NotFound)?;
+    let row: WorkflowRow = sqlx::query_as(concat!(
+        workflow_select!(),
+        " WHERE w.org_id = $1 AND w.id = $2"
+    ))
+    .bind(org_id)
+    .bind(id)
+    .fetch_optional(conn)
+    .await?
+    .ok_or(ServiceError::NotFound)?;
     workflow_from(row)
 }
 
-async fn check_references(conn: &mut PgConnection, org_id: Uuid, definition: &Definition) -> ServiceResult<()> {
+async fn check_references(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    definition: &Definition,
+) -> ServiceResult<()> {
     for action in &definition.actions {
-        let ok: bool = match action {
-            Action::SetStatus { status } => {
-                sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM case_statuses WHERE org_id = $1 AND key = $2)")
-                    .bind(org_id)
-                    .bind(status)
-                    .fetch_one(&mut *conn)
-                    .await?
-            }
-            Action::SetPriority { priority } => {
-                sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM case_priorities WHERE org_id = $1 AND key = $2)")
-                    .bind(org_id)
-                    .bind(priority)
-                    .fetch_one(&mut *conn)
-                    .await?
-            }
-            Action::AssignTeam { team_id: Some(team_id) } => {
-                sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM teams WHERE org_id = $1 AND id = $2)")
+        let ok: bool =
+            match action {
+                Action::SetStatus { status } => sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM case_statuses WHERE org_id = $1 AND key = $2)",
+                )
+                .bind(org_id)
+                .bind(status)
+                .fetch_one(&mut *conn)
+                .await?,
+                Action::SetPriority { priority } => sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM case_priorities WHERE org_id = $1 AND key = $2)",
+                )
+                .bind(org_id)
+                .bind(priority)
+                .fetch_one(&mut *conn)
+                .await?,
+                Action::AssignTeam {
+                    team_id: Some(team_id),
+                } => {
+                    sqlx::query_scalar(
+                        "SELECT EXISTS (SELECT 1 FROM teams WHERE org_id = $1 AND id = $2)",
+                    )
                     .bind(org_id)
                     .bind(team_id)
                     .fetch_one(&mut *conn)
                     .await?
-            }
-            Action::AssignUser { user_id: Some(user_id) } => {
-                sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM memberships WHERE org_id = $1 AND user_id = $2)")
-                    .bind(org_id)
-                    .bind(user_id)
-                    .fetch_one(&mut *conn)
-                    .await?
-            }
-            _ => true,
-        };
+                }
+                Action::AssignUser {
+                    user_id: Some(user_id),
+                } => sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM memberships WHERE org_id = $1 AND user_id = $2)",
+                )
+                .bind(org_id)
+                .bind(user_id)
+                .fetch_one(&mut *conn)
+                .await?,
+                Action::Plugin {
+                    install_id,
+                    action,
+                    input,
+                } => {
+                    crate::plugins::check_action(conn, org_id, *install_id, action, input).await?;
+                    true
+                }
+                _ => true,
+            };
         if !ok {
-            return Err(invalid("definition", "refers to a status, priority, team, or member that does not exist"));
+            return Err(invalid(
+                "definition",
+                "refers to a status, priority, team, or member that does not exist",
+            ));
         }
     }
     Ok(())
@@ -259,7 +350,16 @@ pub async fn create(
             }
         })?;
     insert_version(&mut tx, org_id, id, 1, &definition, actor).await?;
-    record(&mut tx, org_id, actor, "workflow.created", "workflow", id, json!({ "name": name })).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "workflow.created",
+        "workflow",
+        id,
+        json!({ "name": name }),
+    )
+    .await?;
     let workflow = load(&mut tx, org_id, id).await?;
     tx.commit().await?;
     Ok(workflow)
@@ -318,7 +418,15 @@ pub async fn update(
     }
     if let Some(definition) = &definition {
         check_references(&mut tx, org_id, definition).await?;
-        insert_version(&mut tx, org_id, id, current.latest_version + 1, definition, actor).await?;
+        insert_version(
+            &mut tx,
+            org_id,
+            id,
+            current.latest_version + 1,
+            definition,
+            actor,
+        )
+        .await?;
     }
     record(
         &mut tx,
@@ -335,7 +443,13 @@ pub async fn update(
     Ok(workflow)
 }
 
-pub async fn set_enabled(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uuid, enabled: bool) -> ServiceResult<Workflow> {
+pub async fn set_enabled(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    id: Uuid,
+    enabled: bool,
+) -> ServiceResult<Workflow> {
     let mut tx = conn.begin().await?;
     authz::require(&mut tx, org_id, actor, Permission::WorkflowsPublish).await?;
     let updated = sqlx::query(
@@ -358,7 +472,11 @@ pub async fn set_enabled(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id
         &mut tx,
         org_id,
         actor,
-        if enabled { "workflow.published" } else { "workflow.disabled" },
+        if enabled {
+            "workflow.published"
+        } else {
+            "workflow.disabled"
+        },
         "workflow",
         id,
         json!({}),
@@ -369,7 +487,12 @@ pub async fn set_enabled(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id
     Ok(workflow)
 }
 
-pub async fn delete(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uuid) -> ServiceResult<()> {
+pub async fn delete(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    id: Uuid,
+) -> ServiceResult<()> {
     let mut tx = conn.begin().await?;
     authz::require(&mut tx, org_id, actor, Permission::WorkflowsManage).await?;
     sqlx::query("SET CONSTRAINTS workflows_published_version_fkey DEFERRED")
@@ -384,7 +507,16 @@ pub async fn delete(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uui
     if deleted == 0 {
         return Err(ServiceError::NotFound);
     }
-    record(&mut tx, org_id, actor, "workflow.deleted", "workflow", id, json!({})).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "workflow.deleted",
+        "workflow",
+        id,
+        json!({}),
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -401,7 +533,13 @@ pub struct Run {
     pub created_at: DateTime<Utc>,
 }
 
-pub async fn runs(conn: &mut PgConnection, org_id: Uuid, actor: Actor, workflow_id: Uuid, page: Page) -> ServiceResult<Vec<Run>> {
+pub async fn runs(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    workflow_id: Uuid,
+    page: Page,
+) -> ServiceResult<Vec<Run>> {
     authz::require(conn, org_id, actor, Permission::WorkflowsManage).await?;
     Ok(sqlx::query_as(
         "SELECT id, version_id, event_id, case_id, status, steps, error, created_at FROM workflow_runs
@@ -432,14 +570,18 @@ fn field_value(case: &Case, field: Field) -> Value {
 
 pub fn matches(case: &Case, condition: &Condition) -> bool {
     let actual = field_value(case, condition.field);
-    let empty = actual.is_null() || actual.as_array().is_some_and(|a| a.is_empty()) || actual == json!("");
+    let empty =
+        actual.is_null() || actual.as_array().is_some_and(|a| a.is_empty()) || actual == json!("");
     let as_text = |v: &Value| v.as_str().map(|s| s.to_lowercase());
     match condition.op {
         Op::IsEmpty => empty,
         Op::IsNotEmpty => !empty,
         Op::Eq => actual == condition.value,
         Op::Neq => actual != condition.value,
-        Op::In => condition.value.as_array().is_some_and(|options| options.contains(&actual)),
+        Op::In => condition
+            .value
+            .as_array()
+            .is_some_and(|options| options.contains(&actual)),
         Op::Contains => match (&actual, as_text(&condition.value)) {
             (Value::Array(items), _) => items.contains(&condition.value),
             (Value::String(s), Some(needle)) => s.to_lowercase().contains(&needle),
@@ -448,7 +590,7 @@ pub fn matches(case: &Case, condition: &Condition) -> bool {
     }
 }
 
-pub async fn evaluate(pool: &PgPool, event_id: Uuid) -> anyhow::Result<()> {
+pub async fn evaluate(pool: &PgPool, secrets: &Secrets, event_id: Uuid) -> anyhow::Result<()> {
     let mut conn = pool.acquire().await?;
     let Some(event) = events::load(&mut conn, event_id).await? else {
         return Ok(());
@@ -516,18 +658,39 @@ pub async fn evaluate(pool: &PgPool, event_id: Uuid) -> anyhow::Result<()> {
         let mut steps = Vec::new();
         let mut failure = None;
         for action in &definition.actions {
-            match apply(&mut conn, event.org_id, actor, case.id, action, cause).await {
+            match apply(
+                &mut conn,
+                secrets,
+                event.org_id,
+                actor,
+                case.id,
+                action,
+                cause,
+            )
+            .await
+            {
                 Ok(()) => steps.push(json!({ "action": action, "status": "succeeded" })),
                 Err(err) => {
-                    steps.push(json!({ "action": action, "status": "failed", "error": err.to_string() }));
+                    steps.push(
+                        json!({ "action": action, "status": "failed", "error": err.to_string() }),
+                    );
                     failure = Some(err.to_string());
                     break;
                 }
             }
         }
+        metrics::counter!(
+            "ultrivly_workflow_runs_total",
+            "status" => if failure.is_some() { "failed" } else { "succeeded" }
+        )
+        .increment(1);
         sqlx::query("UPDATE workflow_runs SET status = $2, steps = $3, error = $4 WHERE id = $1")
             .bind(run_id)
-            .bind(if failure.is_some() { "failed" } else { "succeeded" })
+            .bind(if failure.is_some() {
+                "failed"
+            } else {
+                "succeeded"
+            })
             .bind(json!(steps))
             .bind(failure)
             .execute(&mut *conn)
@@ -538,6 +701,7 @@ pub async fn evaluate(pool: &PgPool, event_id: Uuid) -> anyhow::Result<()> {
 
 async fn apply(
     conn: &mut PgConnection,
+    secrets: &Secrets,
     org_id: Uuid,
     actor: Actor,
     case_id: Uuid,
@@ -559,7 +723,11 @@ async fn apply(
             let next: Vec<String> = if matches!(action, Action::AddTags { .. }) {
                 current.tags.iter().cloned().chain(tags).collect()
             } else {
-                current.tags.into_iter().filter(|t| !tags.contains(t)).collect()
+                current
+                    .tags
+                    .into_iter()
+                    .filter(|t| !tags.contains(t))
+                    .collect()
             };
             CaseChanges {
                 tags: Some(next),
@@ -575,8 +743,37 @@ async fn apply(
             ..CaseChanges::default()
         },
         Action::AddNote { body } => {
-            messages::add(conn, org_id, actor, case_id, "internal", body, Some("text"), cause).await?;
+            messages::add(
+                conn,
+                org_id,
+                actor,
+                messages::NewMessage {
+                    case_id,
+                    visibility: "internal",
+                    body,
+                    body_format: Some("text"),
+                },
+                cause,
+            )
+            .await?;
             return Ok(());
+        }
+        Action::Plugin {
+            install_id,
+            action,
+            input,
+        } => {
+            crate::plugins::check_action(conn, org_id, *install_id, action, input).await?;
+            return crate::plugins::queue_action(
+                conn,
+                secrets,
+                org_id,
+                *install_id,
+                action,
+                input,
+                case_id,
+            )
+            .await;
         }
     };
     records::update(conn, org_id, actor, case_id, changes, cause).await?;

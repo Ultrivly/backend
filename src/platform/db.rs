@@ -14,9 +14,6 @@ pub async fn connect(config: &DatabaseConfig) -> anyhow::Result<PgPool> {
 
     let options = options.application_name("ultrivly");
 
-    
-    
-    
     PgConnection::connect_with(&options)
         .await
         .context("could not connect to PostgreSQL")?

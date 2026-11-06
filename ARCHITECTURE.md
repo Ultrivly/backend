@@ -162,7 +162,11 @@ Conventions:
 4. **Purge.** `ultrivly purge` deletes expired rows. Foreign keys cascade to everything the row owns: an organization takes all its tenant data, including its own audit trail; a workspace takes its teams, queues, and cases; a case takes its messages, history, and attachments. The purge itself is audited, at platform level for organizations.
 5. **Files.** Every deleted attachment row queues its object key in `blob_deletions` from a trigger, in the same transaction, and an organization purge also queues its whole `org/<id>/` prefix. The purge then removes them from object storage (S3, an S3-compatible server, or local disk), retrying failures with backoff, so no file is left behind.
 
-Not yet covered: data still present in database backups until they expire (backup expiry is an open decision), per-organization retention settings, and deleting users and contacts, which needs an anonymization rule for the messages they wrote.
+Operational records expire on their own: dispatched domain events and webhook deliveries after 30 days, workflow runs after 90, ended sessions 7 days after they end, finished jobs after 7 days and dead jobs after 30. Exports are kept for 7 days. The full table is in [docs/data-lifecycle.md](docs/data-lifecycle.md).
+
+**Exports** (`src/exports/`) are built by an `export.build` job. The job streams each tenant table as JSON Lines into a zip in a temporary file, adds the attachment files, and uploads the result to `org/<id>/exports/<id>.zip` with a multipart upload, so memory stays flat however large the organization is. A contact export (for access requests) includes only that contact's cases and the files on their public messages. Columns ending in `_ciphertext` or `_hash`, storage keys and search vectors are removed from every row.
+
+Not yet covered: per-organization retention settings, and deleting users and contacts, which needs an anonymization rule for the messages they wrote. Backups are the operator's responsibility; [docs/operations.md](docs/operations.md) has a rehearsed procedure.
 
 ## 8. Events, jobs, and workflows
 
@@ -257,16 +261,27 @@ Each plugin has a versioned **manifest** listing its capabilities, requested API
 - Per-install rate limits and concurrency caps. Repeated failures pause the install automatically and notify admins.
 - The plugin protocol is versioned separately from the public API. Ultrivly supports at least the current and previous version.
 
-### 10.7 Build order
+### 10.7 What is built today (`src/plugins/`)
 
-1. `Plugin` trait, manifest format, installs and grants, and the plugin protocol.
-2. Webhook plugins, reusing the existing webhook signing and delivery code.
-3. The first one or two built-in plugins, picked from pilot needs.
-4. Later: example webhook plugins and SDK helpers in TypeScript and Rust.
+The first version is narrower than sections 10.1–10.6 describe. Where they differ, this section is what the code does.
+
+- **Manifest:** `key`, `name`, `version`, `permissions` (Ultrivly permission keys), `events` (domain event kinds or `*`), and `actions`, each with typed inputs (`text`, `number`, `boolean`). Unknown fields are rejected. Lookups and configuration schemas are not built yet.
+- **Built-in plugins:** a `Builtin` enum compiled into the binary, rather than a trait with one directory per plugin. The first one is `slack_notify`. Its only config is a webhook URL, which must be `https://hooks.slack.com/...`, and it is stored encrypted and never returned.
+- **Webhook plugins:** installing one fetches `GET {base}/manifest` through the guarded HTTP client. The installer must already hold every permission the plugin requests, the same no-escalation rule as API credentials. The install then creates an API credential limited to those permissions and, if the plugin subscribes to events, a webhook endpoint at `{base}/events`. The API token and signing secret are returned once.
+- **Principal:** a plugin acts through its API credential (`Actor::ApiCredential`). There is no separate `Actor::Plugin` yet.
+- **Workflow actions:** a workflow step `{"type": "plugin", "install_id", "action", "input"}` is checked against the manifest when the workflow is saved and again when it runs. Running a step queues a `plugin.action` job with a sealed payload. A webhook plugin receives `POST {base}/actions/{action}`, signed like a webhook. Any 2xx response counts as success; response bodies are not validated yet.
+- **Enable, disable and uninstall:** disabling pauses the webhook endpoint, stops actions, and makes the API token fail authentication until the plugin is re-enabled. Uninstalling revokes the token and deletes the endpoint.
+- **Not built yet:** limiting an install to specific workspaces, re-approval when a manifest asks for more access (the manifest is read once at install), `plugin_invocations` logging, automatic pausing after repeated failures, and lookups.
 
 ## 11. Channels
 
-Every case has a `source_channel`. Channel adapters in `channels/` convert inbound traffic into calls to `cases` services and send outbound replies; they hold no case logic. Web and API intake come first. Email, chat, and social adapters follow the order still to be decided (§13.1). Adapters for inbound providers that send webhooks verify each provider's signature.
+**Outbound email** goes through one SMTP transport. The envelope sender is always the operator's `ULTRIVLY_MAIL_FROM`. An organization can verify a sending domain (`channels::mail_domains`): Ultrivly generates a 2048-bit RSA key per domain, the organization publishes the public key as a DKIM TXT record, and a verify call looks the record up through `hickory-resolver`. Once the domain is verified, channel replies use the channel address as `From:` and are DKIM-signed by lettre (relaxed/relaxed canonicalization; signs From, To, Subject, Date, and Message-ID, Reply-To and threading headers when present). That way DMARC passes through DKIM alignment while SPF stays on the operator's domain. An install-wide suppression list (`email_suppressions`) is fed by signed bounce and complaint events at `/api/v1/mail/events`. `platform::mail::send_checked` skips suppressed recipients, except for account-security email. The list is never exposed to organizations, because it would reveal other tenants' delivery problems.
+
+Every case has a `source_channel`. Channel adapters in `channels/` convert inbound traffic into calls to `cases` services and send outbound replies; they hold no case logic. A channel belongs to one workspace and has its own signing secret, which is encrypted and can be rotated.
+
+- **Email:** Ultrivly does not run a mail server. An inbound relay or mail provider parses each message and posts it as JSON to `POST /api/v1/inbound/{channel_id}/email`, signed with the channel secret (`ultrivly-signature: t=…,v1=…`, 5-minute tolerance). Messages are de-duplicated by `Message-ID`. A message joins an existing case only if the sender is that case's requester and it references an earlier message (`In-Reply-To`/`References`) or carries the `[#N]` subject tag. Anyone else gets a new case, so a forwarded thread can't be used to read someone else's case. Auto-submitted mail and mail from the channel's own address are dropped to prevent loops. Public agent replies are queued as `channel.email_reply` jobs and sent with threading headers and `Reply-To` set to the channel address. Internal notes are never emailed.
+- **Social:** the same signed webhook pattern at `/api/v1/inbound/{channel_id}/social`. Senders are matched by platform user ID (`contact_identities`) and never linked to a contact by email. Each platform thread maps to one case.
+- **Chat:** an embeddable widget calls `/api/v1/chat/{channel_id}/conversations`. Requests must come from one of the channel's allowed origins (checked on every call, with CORS headers only for allowed origins). Starting a chat returns a conversation token, which is stored as a hash and required to read or post messages. Chat requesters are marked `requester_unverified`, because the email they type is not proven. The widget sees only public messages.
 
 ## 12. Search and reporting
 
@@ -317,9 +332,61 @@ Authentication is implemented as library services in `identity`; the HTTP layer 
 - **Limits**: 1 MiB request bodies, 30 s request timeout.
 - **Org-scoped endpoints** call `require_org_access` (enforced SSO, required MFA) before the services check permissions.
 
-**SAML is deliberately not supported (decided).** Safe SAML needs the xmlsec1/libxml2 C libraries for XML signature checking, and hand-written XML signature checking is the most common source of SAML vulnerabilities. OpenID Connect covers Okta, Entra ID, Google Workspace, Keycloak, OneLogin, JumpCloud, and Auth0. Revisit only if a pilot customer's identity provider cannot do OIDC.
+### 13.2 SAML (`identity::saml`)
 
-Not yet built: API credentials for integrations.
+SAML 2.0 is supported alongside OIDC for enterprise connections. XML signatures are verified by `samael` with libxmlsec1; nothing is hand-written.
+
+- **Configuration:** connections are configured from the IdP's metadata XML. Metadata without a signing certificate is refused, because samael would otherwise skip signature checks.
+- **Signatures:** only SHA-256 or stronger algorithms and digests are accepted.
+- **Requests:** every request has a 256-bit ID stored server-side, single-use, and valid for 10 minutes. Responses must answer that request (IdP-initiated sign-in is refused) and arrive in the browser that started it. That browser cookie is `SameSite=None`, because the IdP posts back cross-site.
+- **Assertions:** the audience must be present and name this service, and each assertion ID is accepted once.
+- **After verification:** the same account rules as OIDC apply (section 13): no takeover by email, linking by the account owner only, and email-domain restrictions.
+- **Endpoints:** the assertion consumer service (`/auth/saml/{id}/acs`) is the only route exempt from the same-site POST check. SP metadata is published at `/auth/saml/{id}/metadata`.
+
+### 13.3 API credentials
+
+API keys are `ult_`-prefixed bearer tokens, stored as hashes, created only by signed-in people with `api_credentials.manage`.
+
+- **Permissions:** each key carries an explicit permission list, never more than its creator holds.
+- **Lifetime:** keys can expire (up to 2 years) and be revoked instantly.
+- **Scope:** a key works only inside its own organization; any other organization answers 404.
+- **Limits:** keys cannot create other keys.
+
+### 13.4 HTTP API surface
+
+All endpoints are under `/api/v1`. Organization-scoped routes take `{org_id}` and accept either a session cookie or a bearer API key. Lists use cursor pagination (`?limit=&cursor=`, response `{data, next_cursor}`), and errors use `{"error": {"code", "message", "field"?}}`.
+
+| Area | Routes |
+|---|---|
+| Accounts and auth | `auth/*`, `me/*` (profile, password, sessions, TOTP, passkeys, identity linking), `/auth/oidc/*`, `/auth/saml/*` |
+| Organizations | `orgs` (create, list mine), `orgs/{org_id}` (get, update, delete, restore), workspaces, members (status, removal, roles), roles, permissions catalogue, invitations, SSO connections, audit events, API credentials |
+| Routing | departments, teams and team members, queues and queue cases |
+| Configuration | `statuses`, `priorities` (create, update, delete; defaults can't be deleted and values in use return 409), `custom-fields` (text, number, boolean, date, select; validated on case create and update), `sla-policies` (per priority, optionally per workspace; breaches emit `case.sla_breached`), `views` (saved case filters, private or shared, `views/{id}/cases`) |
+| Channels | `channels` (email, chat, social; secret rotation), signed `inbound/{id}/email` and `inbound/{id}/social`, chat widget `chat/{channel_id}/conversations[/{case_id}/messages]` (origin allow-list and CORS, conversation token) |
+| Cases | case settings (statuses and priorities), contacts, cases (filters, search, update, delete, restore), history, messages and internal notes, links, attachments (upload up to 25 MB, safe download) |
+| Requester portal | `portal/cases`, `portal/cases/{id}` (public messages only), replies, `portal/workspaces/{id}/cases` (only where `portal_enabled`) |
+| Knowledge | `kb/categories`, `kb/articles` (draft, publish, archive), public help center at `help/{org_slug}/articles` (no sign-in) |
+| Automation | `webhooks` (signed deliveries, delivery log, redeliver, secret rotation), `workflows` (versions, publish, disable, runs; `plugin` action steps), `plugins` (built-in catalogue at `/api/v1/plugins`, install, enable or disable, uninstall) |
+| AI | `ai` (organization settings), `cases/{case_id}/assist` (summary or reply draft) |
+| Reporting | `reports/summary` (volumes, open work, resolution and first-response times, daily series, workflow outcomes; metric definitions included) |
+| Operations | `jobs` (this organization's background jobs, retry dead ones), `exports` (organization or contact export, status, download) |
+| Email | `mail-domains` (add, DKIM DNS record, verify, remove), `mail/events` (signed bounce and complaint events; operator-level, outside any organization) |
+| Reference | `openapi.json` (OpenAPI 3.0 for every route) |
+
+**Idempotency:** any `POST` under `/api/v1/orgs/{org_id}/` may send an `Idempotency-Key` header (1–255 printable characters). Keys are scoped to the organization and the caller, and are kept for 24 hours. Repeating a request replays the stored response with `idempotent-replayed: true`. Reusing a key for a different request returns 422, and a key whose first request is still running returns 409. 5xx responses are not stored, so the client can retry.
+
+**OpenAPI:** `src/http/openapi.json` is generated from the router and the request types by `scripts/generate_openapi.py`, and served at `/api/v1/openapi.json`. A unit test compares the document with the routes registered in `http/routes/mod.rs` and fails if either has an entry the other lacks. CI also regenerates the file and fails if it changed. Request bodies and query parameters are typed from the Rust structs. Most response bodies are documented only by their top-level keys.
+
+**Stored responses** are encrypted with `platform::secrets`, because some responses contain secrets shown only once (new API keys, webhook and plugin secrets).
+
+**Rate limits:** `http::throttle` counts requests per caller (API key or session) and per client IP in fixed one-minute windows, held in memory: 1,200 and 3,000 per minute by default, configurable, with `0` disabling a limit. The counters are per process, so the effective limit grows with the number of API containers. This guards against abuse without a database write on every request. Sensitive endpoints keep their own Postgres-backed limits.
+
+Domain events (`case.*`, `contact.created`, `article.published`) are written to the outbox in the same transaction as the change. The worker fans each event out to subscribed webhooks and to workflow evaluation.
+
+### 13.5 Build requirements
+
+- **XML security:** SAML needs libxmlsec1, libxml2, libxslt and pkg-config. On macOS: `brew install libxmlsec1 libxslt pkgconf`. `.cargo/config.toml` points pkg-config at Homebrew's libxml2 and libxslt, because mixing them with macOS's own copies crashes at runtime. Linux images use the distribution packages (for example `libxmlsec1-dev`, `libxml2-dev`, `libxslt1-dev`, `pkg-config`).
+- **OpenSSL:** both passkeys and SAML need OpenSSL.
 
 ## 14. Configuration and deployment
 
@@ -327,6 +394,9 @@ Not yet built: API credentials for integrations.
 - `/healthz` (process is alive) and `/readyz` (database reachable, migrations current) endpoints.
 - Migrations live in `migrations/` as `<UTC timestamp>_<name>.sql`. They are forward-only: never edit an applied file (the migrator refuses a changed checksum); add a new migration instead. They are tested against representative data. Releases are written to tolerate the previous app version during rolling deploys (expand, then contract).
 - The same image serves hosted and self-hosted deployments. Edition differences are configuration, not forks.
+- **Artifacts:** `Dockerfile` (Debian bookworm, non-root user 10001, `ultrivly probe` health check). `deploy/compose.yaml` is a reference self-hosted stack: Postgres, a one-shot migration, the API and the worker, on a read-only root filesystem with all capabilities dropped. It has been run end to end: sign-up, email, upload, export.
+- **CI** (`.github/workflows/ci.yml`): rustfmt; clippy with warnings denied; the no-comments rule; OpenAPI drift; the full test suite against PostgreSQL 15 and 18; migrations applied to an empty database; `cargo deny` for advisories, licenses and sources (`deny.toml` records each reviewed exception and why); an image build. `release.yml` publishes the image to GHCR for `v*` tags (amd64).
+- Operator documentation is in [docs/](docs/README.md).
 
 ### 14.1 Cloud and self-hosted from one codebase
 
@@ -341,9 +411,10 @@ Ultrivly is a self-hostable SaaS: every feature must run both on Ultrivly's clou
 
 ## 15. Observability
 
-- `tracing` spans for every request and job, carrying request ID, `org_id`, and actor ID. Personal data and secrets are not logged.
-- Metrics: request latency and error rate per route, job queue depth and age, workflow success/failure, webhook delivery success, and external provider errors.
-- Alerts on growing dead jobs and webhook failure spikes.
+- **Logs:** `tracing`, as text or JSON (`ULTRIVLY_LOG_FORMAT`). Each request span carries the method, path and request ID, and every response carries the ID as `x-request-id`. Personal data and secrets are not logged. Job failures name the job ID, kind and attempt, and a permanent failure is logged at `ERROR`.
+- **Metrics** (`platform::telemetry`): a Prometheus recorder served on a separate listener (`ULTRIVLY_METRICS_BIND`), never the public port. It covers requests and latency per route template, throttled requests, job outcomes and durations, queue depth by kind and state, outbox lag, workflow runs, channel intake, AI requests and suppressed emails. Labels never carry tenant IDs. The metric list and suggested alerts are in [docs/operations.md](docs/operations.md).
+- **Failed jobs:** dead jobs keep their sealed payload and last error, so they can be retried: by organization admins at `/orgs/{org_id}/jobs`, and across the install with `ultrivly jobs`. A retry that would duplicate an identical queued job (same de-duplication key) is refused.
+- Not yet built: OpenTelemetry trace export, and `org_id` and actor fields on request spans.
 
 ## 16. Testing strategy
 
@@ -351,22 +422,39 @@ Ultrivly is a self-hostable SaaS: every feature must run both on Ultrivly's clou
 |---|---|
 | Unit | Status transitions, workflow condition evaluation, permission resolution, signature generation. |
 | Integration (real Postgres) | Repositories, transactions, outbox, job claiming, schema constraints. `#[sqlx::test]` creates a fresh database per test from `DATABASE_URL` (start one with `docker compose up -d`; see `.env.example`). |
-| API contract | Responses match the OpenAPI spec; error envelope; pagination. |
-| Tenant isolation | A fixture with two organizations. Every endpoint and job type is exercised across the boundary. |
+| API contract | Every registered route is in `openapi.json`, and the document has no routes the router lacks (`routes::tests`). The document validates as OpenAPI 3.0. Error envelope and pagination are covered by the HTTP tests. |
+| Tenant isolation | Two organizations on one app (`tests/tenancy.rs` and the cross-tenant checks in other suites). Another organization's IDs are probed through reads, writes and indirect references (team, workspace, contact, priority, linked case, workflow targets, view filters, exports), plus search, attachments, API keys and jobs. |
+| Performance | `examples/load.rs` seeds a throwaway database and measures per-endpoint latency. The baseline and the method are in [docs/operations.md](docs/operations.md). The first run found a race when creating contacts at the same time, now fixed and covered by a test. |
 | End-to-end | Phase 0 exit journey: requester submits → agent resolves → outsider is denied. |
 
-## 17. AI (later phase)
+## 17. AI (`src/ai/`)
 
-The `ai/` module is not built until Phase 3. When it is: a provider trait with per-organization configuration and customer-supplied keys, disabled by default; every AI action goes through `authz` and `audit` as its own principal; outputs are marked as AI-generated; provider failures degrade to normal case handling (§4.7).
+AI is limited to agent assistance: it suggests, and a person decides. It never changes a case or sends anything to a customer.
+
+- **Off by default.** Each organization turns it on in `ai_settings` (requires `organization.manage`) and chooses which features to enable: `summary` and `reply_draft`.
+- **Providers:** `openai` calls the OpenAI Responses API (`{base}/responses`, default base `https://api.openai.com/v1`) with `store: false`, so OpenAI does not keep the response. `openai_compatible` calls `{base}/chat/completions` on any server that speaks that format, which is how self-hosted installs use a local model. Organizations bring their own API key, which is encrypted and never returned. There is no default model; admins must set one.
+- **Network:** calls go through `platform::net`, so the base URL follows the same rules as webhooks. On the cloud it must be public HTTPS. A self-hosted operator can allow an internal model server through the network allowlist.
+- **What the model sees:** the case subject, description and messages the caller is allowed to read. Internal notes are included only if the organization turns on `include_internal_notes`. Very long transcripts drop their oldest messages and say how many were left out. The transcript is wrapped as data with markup escaped, and the system prompt tells the model to ignore instructions inside it.
+- **Controls:** the caller needs read access to the case. Each organization can make 300 assist requests per hour. Every suggestion writes an `ai.suggestion_generated` audit event (task, provider, model, message count; no content). A database connection is not held while waiting on the provider.
+- **Failure:** a refusal, a cut-off response, an empty answer, or a provider error returns `409 ai_unavailable`, and the agent carries on without a suggestion (§4.7).
 
 ## 18. Open decisions affecting this design
 
-- Rust stack confirmation (axum / sqlx / Postgres queue) — validate with a spike against the Phase 0 scope.
 - Whether to adopt Postgres row-level security from the start.
 - Self-hosted packaging: container only, or also a single-host bundle (§13.4).
-- SAML: deferred (section 13). Reopen only for a pilot customer whose identity provider lacks OIDC.
 - Audit retention and tamper-resistance requirements (§13.7).
-- Degree of status and custom-field configurability in the MVP (§13.5).
-- Plugins: which phase they belong to (PRODUCT.md does not schedule them).
 - Which built-in plugins come first, based on the internal systems pilot customers most need.
 - Whether cloud customers need a way to reach internal services that can't be exposed publicly. Webhook plugins currently require a public HTTPS endpoint on our cloud.
+
+### 18.1 Not yet built
+
+- **Web UI:** the agent app, requester portal and chat widget front ends.
+- **Plugins:** lookups, workspace-scoped installs, manifest re-approval, invocation logs, and automatic pausing (see §10.7).
+- **Channels:** provider-specific adapters (for example a direct IMAP or Graph mailbox, or native Meta and WhatsApp webhooks). Today a relay or provider has to post the signed JSON formats in §11. The same applies to bounce and complaint events.
+- **SLA:** business hours and calendars. Targets currently count wall-clock minutes.
+- **AI:** streaming responses, and features beyond summaries and reply drafts.
+- **Secret key rotation:** `ULTRIVLY_SECRET_KEY` can't be rotated yet. Rotation would need versioned ciphertexts and a re-encryption job.
+- **Shared rate limits:** the general API limit is per process (§13.4).
+- **Tracing export:** OpenTelemetry spans (§15).
+- **arm64 images:** the release workflow publishes amd64 only. arm64 builds work locally (`docker build`).
+- **Independent security review:** the code has had an internal review with targeted tests, but no external penetration test.

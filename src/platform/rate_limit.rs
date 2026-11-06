@@ -1,6 +1,3 @@
-
-
-
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -11,8 +8,6 @@ pub enum Decision {
     Allowed,
     Limited { retry_after_secs: u64 },
 }
-
-
 
 pub async fn check(
     pool: &PgPool,
@@ -38,7 +33,6 @@ pub async fn check(
         }
     })
 }
-
 
 pub fn ip_key(ip: IpAddr) -> String {
     match ip {

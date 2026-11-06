@@ -1,10 +1,3 @@
-
-
-
-
-
-
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, KeyInit, Mac};
@@ -38,7 +31,7 @@ pub enum MfaError {
     InvalidName,
     #[error("you have the maximum number of passkeys; remove one first")]
     TooManyFactors,
-    
+
     #[error("this sign-in attempt has expired; please sign in again")]
     InvalidChallenge,
     #[error(transparent)]
@@ -50,12 +43,11 @@ pub enum MfaError {
 #[derive(Debug)]
 pub struct TotpEnrollment {
     pub factor_id: Uuid,
-    
+
     pub secret: String,
-    
+
     pub otpauth_uri: String,
 }
-
 
 pub async fn has_mfa(conn: &mut PgConnection, user_id: Uuid) -> sqlx::Result<bool> {
     sqlx::query_scalar(
@@ -75,8 +67,6 @@ pub async fn has_confirmed_totp(conn: &mut PgConnection, user_id: Uuid) -> sqlx:
     .fetch_one(conn)
     .await
 }
-
-
 
 pub async fn start_totp_enrollment(
     conn: &mut PgConnection,
@@ -128,9 +118,6 @@ pub async fn start_totp_enrollment(
     })
 }
 
-
-
-
 pub async fn confirm_totp_enrollment(
     conn: &mut PgConnection,
     secrets: &Secrets,
@@ -177,8 +164,6 @@ pub async fn confirm_totp_enrollment(
     Ok(codes)
 }
 
-
-
 pub async fn complete_challenge(
     conn: &mut PgConnection,
     secrets: &Secrets,
@@ -197,7 +182,6 @@ pub async fn complete_challenge(
     tx.commit().await?;
     Ok(session)
 }
-
 
 pub(crate) struct PendingChallenge {
     token_hash: Vec<u8>,
@@ -227,7 +211,6 @@ pub(crate) async fn lock_challenge(
     })
 }
 
-
 pub(crate) async fn fail_challenge(
     conn: &mut PgConnection,
     pending: &PendingChallenge,
@@ -243,7 +226,6 @@ pub(crate) async fn fail_challenge(
         .await?;
     Ok(())
 }
-
 
 pub(crate) async fn finish_challenge(
     conn: &mut PgConnection,
@@ -271,8 +253,6 @@ pub(crate) async fn finish_challenge(
     Ok(session)
 }
 
-
-
 pub async fn verify_session(
     conn: &mut PgConnection,
     secrets: &Secrets,
@@ -291,7 +271,6 @@ pub async fn verify_session(
     tx.commit().await?;
     Ok(())
 }
-
 
 pub async fn regenerate_recovery_codes(
     conn: &mut PgConnection,
@@ -313,8 +292,6 @@ pub async fn regenerate_recovery_codes(
     Ok(codes)
 }
 
-
-
 pub async fn disable_totp(conn: &mut PgConnection, user_id: Uuid) -> Result<(), MfaError> {
     let mut tx = conn.begin().await?;
     sqlx::query("DELETE FROM mfa_factors WHERE user_id = $1 AND kind = 'totp'")
@@ -332,7 +309,6 @@ pub async fn disable_totp(conn: &mut PgConnection, user_id: Uuid) -> Result<(), 
     tx.commit().await?;
     Ok(())
 }
-
 
 async fn check_code(
     conn: &mut PgConnection,
@@ -356,7 +332,7 @@ async fn check_code(
         let Some(step) = matching_step(&seed, &digits, now_secs()) else {
             return Ok(false);
         };
-        
+
         if last_step.is_some_and(|last| step <= last) {
             return Ok(false);
         }
@@ -440,7 +416,6 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-
 fn matching_step(seed: &[u8], code: &str, now: u64) -> Option<i64> {
     let current = (now / STEP_SECS) as i64;
     (current - SKEW_STEPS..=current + SKEW_STEPS)
@@ -454,7 +429,6 @@ fn matching_step(seed: &[u8], code: &str, now: u64) -> Option<i64> {
             bool::from(expected.as_bytes().ct_eq(code.as_bytes()))
         })
 }
-
 
 fn hotp(seed: &[u8], counter: u64) -> u32 {
     let mut mac =
@@ -471,7 +445,6 @@ fn hotp(seed: &[u8], counter: u64) -> u32 {
     value % 10u32.pow(DIGITS)
 }
 
-
 fn base32(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     let mut out = String::new();
@@ -486,7 +459,6 @@ fn base32(bytes: &[u8]) -> String {
     }
     out
 }
-
 
 fn recovery_code() -> String {
     const ALPHABET: &[u8; 32] = b"abcdefghjkmnpqrstuvwxyz234567890";
@@ -509,7 +481,6 @@ fn normalize_recovery_code(code: &str) -> String {
 mod tests {
     use super::*;
 
-    
     #[test]
     fn matches_rfc_6238_test_vectors() {
         let seed = b"12345678901234567890";
@@ -526,7 +497,7 @@ mod tests {
             );
         }
         assert_eq!(matching_step(seed, "000000", 59), None);
-        
+
         assert!(matching_step(seed, "287082", 59 + 30).is_some());
         assert!(matching_step(seed, "287082", 59 + 90).is_none());
     }

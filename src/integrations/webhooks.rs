@@ -54,7 +54,10 @@ macro_rules! endpoint_columns {
 fn check_url(policy: &NetPolicy, url: &str) -> ServiceResult<String> {
     let parsed = url::Url::parse(url.trim()).map_err(|_| invalid("url", "is not a valid URL"))?;
     if url.len() > 2000 || !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(invalid("url", "must not contain credentials and must be under 2000 characters"));
+        return Err(invalid(
+            "url",
+            "must not contain credentials and must be under 2000 characters",
+        ));
     }
     policy
         .check_url(&parsed)
@@ -82,7 +85,11 @@ fn secret_context(id: Uuid) -> String {
     format!("webhook:{id}")
 }
 
-pub async fn list(conn: &mut PgConnection, org_id: Uuid, actor: Actor) -> ServiceResult<Vec<Endpoint>> {
+pub async fn list(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+) -> ServiceResult<Vec<Endpoint>> {
     authz::require(conn, org_id, actor, Permission::WebhooksManage).await?;
     Ok(sqlx::query_as(concat!(
         "SELECT ",
@@ -94,16 +101,25 @@ pub async fn list(conn: &mut PgConnection, org_id: Uuid, actor: Actor) -> Servic
     .await?)
 }
 
+pub struct NewEndpoint<'a> {
+    pub url: &'a str,
+    pub description: &'a str,
+    pub events: &'a [String],
+}
+
 pub async fn create(
     conn: &mut PgConnection,
     policy: &NetPolicy,
     secrets: &Secrets,
     org_id: Uuid,
     actor: Actor,
-    url: &str,
-    description: &str,
-    events: &[String],
+    new: NewEndpoint<'_>,
 ) -> ServiceResult<(Endpoint, String)> {
+    let NewEndpoint {
+        url,
+        description,
+        events,
+    } = new;
     let url = check_url(policy, url)?;
     let events = check_events(events)?;
     if description.chars().count() > 500 {
@@ -116,7 +132,10 @@ pub async fn create(
         .fetch_one(&mut *tx)
         .await?;
     if count >= MAX_ENDPOINTS {
-        return Err(invalid("url", "the organization has the maximum number of webhooks"));
+        return Err(invalid(
+            "url",
+            "the organization has the maximum number of webhooks",
+        ));
     }
     let id = Uuid::now_v7();
     let secret = format!("{SECRET_PREFIX}{}", random_token());
@@ -133,7 +152,16 @@ pub async fn create(
     .bind(secrets.encrypt(&secret_context(id), secret.as_bytes()))
     .fetch_one(&mut *tx)
     .await?;
-    record(&mut tx, org_id, actor, "webhook.created", "webhook", id, json!({ "url": url, "events": events })).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "webhook.created",
+        "webhook",
+        id,
+        json!({ "url": url, "events": events }),
+    )
+    .await?;
     tx.commit().await?;
     Ok((endpoint, secret))
 }
@@ -200,22 +228,38 @@ pub async fn rotate_secret(
     let mut tx = conn.begin().await?;
     authz::require(&mut tx, org_id, actor, Permission::WebhooksManage).await?;
     let secret = format!("{SECRET_PREFIX}{}", random_token());
-    let updated = sqlx::query("UPDATE webhook_endpoints SET secret_ciphertext = $3 WHERE org_id = $1 AND id = $2")
-        .bind(org_id)
-        .bind(id)
-        .bind(secrets.encrypt(&secret_context(id), secret.as_bytes()))
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
+    let updated = sqlx::query(
+        "UPDATE webhook_endpoints SET secret_ciphertext = $3 WHERE org_id = $1 AND id = $2",
+    )
+    .bind(org_id)
+    .bind(id)
+    .bind(secrets.encrypt(&secret_context(id), secret.as_bytes()))
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     if updated == 0 {
         return Err(ServiceError::NotFound);
     }
-    record(&mut tx, org_id, actor, "webhook.secret_rotated", "webhook", id, json!({})).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "webhook.secret_rotated",
+        "webhook",
+        id,
+        json!({}),
+    )
+    .await?;
     tx.commit().await?;
     Ok(secret)
 }
 
-pub async fn delete(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uuid) -> ServiceResult<()> {
+pub async fn delete(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    id: Uuid,
+) -> ServiceResult<()> {
     let mut tx = conn.begin().await?;
     authz::require(&mut tx, org_id, actor, Permission::WebhooksManage).await?;
     let deleted = sqlx::query("DELETE FROM webhook_endpoints WHERE org_id = $1 AND id = $2")
@@ -227,7 +271,16 @@ pub async fn delete(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uui
     if deleted == 0 {
         return Err(ServiceError::NotFound);
     }
-    record(&mut tx, org_id, actor, "webhook.deleted", "webhook", id, json!({})).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "webhook.deleted",
+        "webhook",
+        id,
+        json!({}),
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -254,15 +307,22 @@ pub async fn deliveries(
     .await?)
 }
 
-pub async fn redeliver(conn: &mut PgConnection, org_id: Uuid, actor: Actor, delivery_id: Uuid) -> ServiceResult<()> {
+pub async fn redeliver(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    delivery_id: Uuid,
+) -> ServiceResult<()> {
     let mut tx = conn.begin().await?;
     authz::require(&mut tx, org_id, actor, Permission::WebhooksManage).await?;
-    let updated = sqlx::query("UPDATE webhook_deliveries SET status = 'pending' WHERE org_id = $1 AND id = $2")
-        .bind(org_id)
-        .bind(delivery_id)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
+    let updated = sqlx::query(
+        "UPDATE webhook_deliveries SET status = 'pending' WHERE org_id = $1 AND id = $2",
+    )
+    .bind(org_id)
+    .bind(delivery_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     if updated == 0 {
         return Err(ServiceError::NotFound);
     }
@@ -271,7 +331,11 @@ pub async fn redeliver(conn: &mut PgConnection, org_id: Uuid, actor: Actor, deli
     Ok(())
 }
 
-async fn enqueue_delivery(conn: &mut PgConnection, org_id: Uuid, delivery_id: Uuid) -> sqlx::Result<()> {
+async fn enqueue_delivery(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    delivery_id: Uuid,
+) -> sqlx::Result<()> {
     let key = delivery_id.to_string();
     jobs::enqueue(
         conn,
@@ -344,7 +408,8 @@ pub async fn dispatch_events(pool: &PgPool) -> sqlx::Result<usize> {
 }
 
 pub fn sign(secret: &str, timestamp: i64, body: &[u8]) -> String {
-    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes()).expect("any key length");
+    let mut mac =
+        <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes()).expect("any key length");
     mac.update(timestamp.to_string().as_bytes());
     mac.update(b".");
     mac.update(body);
@@ -355,7 +420,12 @@ pub fn sign(secret: &str, timestamp: i64, body: &[u8]) -> String {
         .collect()
 }
 
-pub async fn deliver(pool: &PgPool, http: &HttpClient, secrets: &Secrets, delivery_id: Uuid) -> anyhow::Result<()> {
+pub async fn deliver(
+    pool: &PgPool,
+    http: &HttpClient,
+    secrets: &Secrets,
+    delivery_id: Uuid,
+) -> anyhow::Result<()> {
     let mut conn = pool.acquire().await?;
     type Row = (Uuid, Uuid, Uuid, String, Vec<u8>, bool, String);
     let row: Option<Row> = sqlx::query_as(
@@ -396,14 +466,20 @@ pub async fn deliver(pool: &PgPool, http: &HttpClient, secrets: &Secrets, delive
                 ("content-type", "application/json".into()),
                 ("ultrivly-event", kind.clone()),
                 ("ultrivly-delivery", delivery_id.to_string()),
-                ("ultrivly-signature", format!("t={timestamp},v1={signature}")),
+                (
+                    "ultrivly-signature",
+                    format!("t={timestamp},v1={signature}"),
+                ),
             ],
             body,
         )
         .await;
     let (status, error) = match &result {
         Ok(code) if (200..300).contains(code) => (Some(*code as i32), None),
-        Ok(code) => (Some(*code as i32), Some(format!("receiver answered {code}"))),
+        Ok(code) => (
+            Some(*code as i32),
+            Some(format!("receiver answered {code}")),
+        ),
         Err(err) => (None, Some(err.to_string())),
     };
     sqlx::query(

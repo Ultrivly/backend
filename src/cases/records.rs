@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::audit::Actor;
 use crate::cases::HistoryEntry;
-use crate::cases::contacts;
+use crate::cases::{contacts, settings};
 use crate::identity::orgs::require_member;
 use crate::platform::authz::{self, Permission, WorkspaceScope};
 use crate::platform::error::{ServiceError, ServiceResult, invalid, text};
@@ -39,6 +39,12 @@ pub struct Case {
     pub closed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub custom_fields: Value,
+    pub first_response_due_at: Option<DateTime<Utc>>,
+    pub resolution_due_at: Option<DateTime<Utc>>,
+    pub sla_breached_at: Option<DateTime<Utc>>,
+    pub channel_id: Option<Uuid>,
+    pub requester_unverified: bool,
 }
 
 macro_rules! case_select {
@@ -46,7 +52,9 @@ macro_rules! case_select {
         "SELECT c.id, c.workspace_id, c.number, c.subject, c.description, c.status_id, s.key AS status,
                 s.category AS status_category, c.priority_id, p.key AS priority, c.category, c.tags,
                 c.requester_contact_id, c.team_id, c.assignee_user_id, c.source_channel,
-                c.first_response_at, c.resolved_at, c.closed_at, c.created_at, c.updated_at
+                c.first_response_at, c.resolved_at, c.closed_at, c.created_at, c.updated_at,
+                c.custom_fields, c.first_response_due_at, c.resolution_due_at, c.sla_breached_at,
+                c.channel_id, c.requester_unverified
          FROM cases c
          JOIN case_statuses s ON s.id = c.status_id
          JOIN case_priorities p ON p.id = c.priority_id
@@ -72,6 +80,8 @@ pub struct CaseFilter {
     pub created_after: Option<DateTime<Utc>>,
     pub created_before: Option<DateTime<Utc>>,
     pub q: Option<String>,
+    pub sla_breached: Option<bool>,
+    pub channel_id: Option<Uuid>,
 }
 
 fn csv<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -126,6 +136,8 @@ pub async fn list(
            AND ($13::timestamptz IS NULL OR c.created_at < $13)
            AND ($14::text IS NULL OR c.search_vector @@ websearch_to_tsquery('simple', $14))
            AND ($15::uuid IS NULL OR c.id < $15)
+           AND ($17::bool IS NULL OR (c.sla_breached_at IS NOT NULL) = $17)
+           AND ($18::uuid IS NULL OR c.channel_id = $18)
          ORDER BY c.id DESC LIMIT $16"
     ))
     .bind(org_id)
@@ -144,6 +156,8 @@ pub async fn list(
     .bind(q)
     .bind(page.cursor)
     .bind(page.limit + 1)
+    .bind(filter.sla_breached)
+    .bind(filter.channel_id)
     .fetch_all(conn)
     .await?)
 }
@@ -223,6 +237,14 @@ pub struct NewCase {
     pub team_id: Option<Uuid>,
     pub assignee_user_id: Option<Uuid>,
     pub source_channel: Option<String>,
+    #[serde(default)]
+    pub custom_fields: serde_json::Map<String, Value>,
+    #[serde(skip)]
+    pub channel_id: Option<Uuid>,
+    #[serde(skip)]
+    pub channel_thread_id: Option<String>,
+    #[serde(skip)]
+    pub requester_unverified: bool,
 }
 
 pub async fn create(
@@ -275,6 +297,8 @@ pub async fn create(
     }
     let status_id = status_id(&mut tx, org_id, new.status.as_deref()).await?;
     let priority_id = priority_id(&mut tx, org_id, new.priority.as_deref()).await?;
+    let custom_fields =
+        settings::validate_custom_fields(&mut tx, org_id, &new.custom_fields, None).await?;
     let contact_id = match &new.requester {
         Requester::Existing { contact_id } => {
             contacts::load(&mut tx, org_id, *contact_id).await?;
@@ -294,8 +318,9 @@ pub async fn create(
     let id = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO cases (id, org_id, workspace_id, number, subject, description, status_id, priority_id,
-                            category, tags, requester_contact_id, team_id, assignee_user_id, source_channel)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+                            category, tags, requester_contact_id, team_id, assignee_user_id, source_channel,
+                            custom_fields, channel_id, channel_thread_id, requester_unverified)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
     )
     .bind(id)
     .bind(org_id)
@@ -311,8 +336,13 @@ pub async fn create(
     .bind(new.team_id)
     .bind(new.assignee_user_id)
     .bind(channel)
+    .bind(&custom_fields)
+    .bind(new.channel_id)
+    .bind(&new.channel_thread_id)
+    .bind(new.requester_unverified)
     .execute(&mut *tx)
     .await?;
+    settings::apply_sla(&mut tx, org_id, id).await?;
 
     history(
         &mut tx,
@@ -351,6 +381,7 @@ pub struct CaseChanges {
     pub team_id: Option<Option<Uuid>>,
     #[serde(default, deserialize_with = "double")]
     pub assignee_user_id: Option<Option<Uuid>>,
+    pub custom_fields: Option<serde_json::Map<String, Value>>,
 }
 
 fn double<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
@@ -380,6 +411,7 @@ pub async fn update(
         || changes.priority.is_some()
         || changes.category.is_some()
         || changes.tags.is_some()
+        || changes.custom_fields.is_some()
         || changes.status.is_some();
     if edits {
         authz::require_in(&mut tx, org_id, ws, actor, Permission::CasesEdit).await?;
@@ -406,6 +438,13 @@ pub async fn update(
         None => None,
     };
     let tags = changes.tags.as_deref().map(normalize_tags).transpose()?;
+    let custom_fields = match &changes.custom_fields {
+        Some(input) => Some(
+            settings::validate_custom_fields(&mut tx, org_id, input, Some(&before.custom_fields))
+                .await?,
+        ),
+        None => None,
+    };
 
     let new_status = match changes.status.as_deref() {
         Some(key) => {
@@ -448,6 +487,7 @@ pub async fn update(
              tags = coalesce($9, tags),
              team_id = CASE WHEN $10 THEN $11 ELSE team_id END,
              assignee_user_id = CASE WHEN $12 THEN $13 ELSE assignee_user_id END,
+             custom_fields = coalesce($15, custom_fields),
              resolved_at = CASE
                  WHEN $14::text IN ('resolved', 'closed') THEN coalesce(resolved_at, now())
                  WHEN $14::text IS NOT NULL THEN NULL
@@ -472,8 +512,12 @@ pub async fn update(
     .bind(changes.assignee_user_id.is_some())
     .bind(changes.assignee_user_id.flatten())
     .bind(new_status.as_ref().map(|(_, _, c)| c.as_str()))
+    .bind(&custom_fields)
     .execute(&mut *tx)
     .await?;
+    if new_priority.is_some_and(|p| p != before.priority_id) {
+        settings::apply_sla(&mut tx, org_id, case_id).await?;
+    }
 
     let after = load(&mut tx, org_id, case_id, false).await?;
     let mut field = |name: &str, from: Value, to: Value| {
@@ -491,6 +535,11 @@ pub async fn update(
     field("priority", json!(before.priority), json!(after.priority));
     field("category", json!(before.category), json!(after.category));
     field("tags", json!(before.tags), json!(after.tags));
+    field(
+        "custom_fields",
+        before.custom_fields.clone(),
+        after.custom_fields.clone(),
+    );
     field("team_id", json!(before.team_id), json!(after.team_id));
     field(
         "assignee_user_id",

@@ -1,6 +1,3 @@
-
-
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sqlx::PgPool;
@@ -74,7 +71,6 @@ async fn sign_up_verify_sign_in_and_sign_out(pool: PgPool) {
     let reused = accounts::verify_email(&mut conn, &signed_up.verification_token).await;
     assert!(matches!(reused, Err(AuthError::InvalidToken)));
 
-    
     let new = complete(sign_in(&pool, "SAM@example.com", PASSWORD).await.unwrap());
     assert_eq!(new.session.user_id, signed_up.user_id);
     assert_eq!(new.session.method, AuthMethod::Password);
@@ -91,7 +87,6 @@ async fn sign_up_verify_sign_in_and_sign_out(pool: PgPool) {
             .is_none()
     );
 
-    
     let stored: i64 =
         sqlx::query_scalar("SELECT count(*) FROM sessions WHERE token_hash = $1::text::bytea")
             .bind(&new.token)
@@ -130,14 +125,13 @@ async fn failures_look_the_same_and_are_throttled(pool: PgPool) {
     for _ in 0..4 {
         let _ = sign_in(&pool, "sam@example.com", "wrong password!!").await;
     }
-    
+
     let locked = sign_in(&pool, "sam@example.com", PASSWORD).await;
     assert!(
         matches!(locked, Err(AuthError::TooManyAttempts)),
         "{locked:?}"
     );
 
-    
     for _ in 0..4 {
         let _ = sign_in(&pool, "nobody@example.com", PASSWORD).await;
     }
@@ -147,7 +141,6 @@ async fn failures_look_the_same_and_are_throttled(pool: PgPool) {
         "{locked:?}"
     );
 
-    
     let disabled = sign_up(&pool, "gone@example.com").await;
     sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1")
         .bind(disabled)
@@ -180,7 +173,6 @@ async fn password_reset_signs_out_everywhere(pool: PgPool) {
         .unwrap();
     assert_eq!(reset_user, user);
 
-    
     let stale = accounts::reset_password(&mut conn, &first, "a brand new password").await;
     assert!(matches!(stale, Err(AuthError::InvalidToken)));
     accounts::reset_password(&mut conn, &token, "a brand new password")
@@ -291,7 +283,7 @@ async fn totp_and_recovery_codes(pool: PgPool) {
             .otpauth_uri
             .starts_with("otpauth://totp/Ultrivly:sam@example.com?secret=")
     );
-    
+
     complete(sign_in(&pool, "sam@example.com", PASSWORD).await.unwrap());
 
     let wrong = mfa::confirm_totp_enrollment(
@@ -304,8 +296,7 @@ async fn totp_and_recovery_codes(pool: PgPool) {
     )
     .await;
     assert!(matches!(wrong, Err(MfaError::InvalidCode)));
-    
-    
+
     let recovery = mfa::confirm_totp_enrollment(
         &mut conn,
         &secrets,
@@ -318,7 +309,6 @@ async fn totp_and_recovery_codes(pool: PgPool) {
     .unwrap();
     assert_eq!(recovery.len(), 10);
 
-    
     let stored: Vec<u8> =
         sqlx::query_scalar("SELECT secret_ciphertext FROM mfa_factors WHERE user_id = $1")
             .bind(user)
@@ -327,7 +317,6 @@ async fn totp_and_recovery_codes(pool: PgPool) {
             .unwrap();
     assert!(!String::from_utf8_lossy(&stored).contains(&enrollment.secret));
 
-    
     let SignIn::MfaRequired { challenge } =
         sign_in(&pool, "sam@example.com", PASSWORD).await.unwrap()
     else {
@@ -339,7 +328,6 @@ async fn totp_and_recovery_codes(pool: PgPool) {
         .unwrap();
     assert!(session.session.mfa_verified);
 
-    
     let SignIn::MfaRequired { challenge } =
         sign_in(&pool, "sam@example.com", PASSWORD).await.unwrap()
     else {
@@ -348,7 +336,6 @@ async fn totp_and_recovery_codes(pool: PgPool) {
     let replay = mfa::complete_challenge(&mut conn, &secrets, &challenge, &code, &client()).await;
     assert!(matches!(replay, Err(MfaError::InvalidCode)), "{replay:?}");
 
-    
     let first = recovery[0].to_uppercase();
     mfa::complete_challenge(&mut conn, &secrets, &challenge, &first, &client())
         .await
@@ -392,7 +379,7 @@ async fn mfa_challenges_allow_five_attempts(pool: PgPool) {
             mfa::complete_challenge(&mut conn, &secrets, &challenge, "000000", &client()).await;
         assert!(matches!(err, Err(MfaError::InvalidCode)));
     }
-    
+
     let code = totp(&enrollment.secret, now());
     let err = mfa::complete_challenge(&mut conn, &secrets, &challenge, &code, &client()).await;
     assert!(matches!(err, Err(MfaError::InvalidChallenge)), "{err:?}");
@@ -424,7 +411,6 @@ async fn organization_policies_require_mfa_and_sso(pool: PgPool) {
         .unwrap();
     assert_eq!(access, Ok(()));
 
-    
     sqlx::query("UPDATE organizations SET require_mfa = true WHERE id = $1")
         .bind(org.org_id)
         .execute(&pool)
@@ -448,7 +434,7 @@ async fn organization_policies_require_mfa_and_sso(pool: PgPool) {
     )
     .await
     .unwrap();
-    
+
     let session = sessions::authenticate(&mut conn, &signed_in.token)
         .await
         .unwrap()
@@ -459,7 +445,6 @@ async fn organization_policies_require_mfa_and_sso(pool: PgPool) {
         .unwrap();
     assert_eq!(access, Ok(()));
 
-    
     sqlx::query(
         "INSERT INTO sso_connections (id, org_id, name, issuer_url, client_id, client_secret_ciphertext, enforced)
          VALUES ($1, $2, 'Okta', 'https://acme.okta.example', 'client', '\\x00', true)",
@@ -474,8 +459,6 @@ async fn organization_policies_require_mfa_and_sso(pool: PgPool) {
         .unwrap();
     assert_eq!(access, Err(OrgAccessError::SsoRequired));
 
-    
-    
     sqlx::query("UPDATE organizations SET require_mfa = false WHERE id = $1")
         .bind(org.org_id)
         .execute(&pool)
@@ -501,8 +484,6 @@ async fn organization_policies_require_mfa_and_sso(pool: PgPool) {
 
 #[sqlx::test]
 async fn password_reset_on_an_unverified_account_removes_pre_attached_access(pool: PgPool) {
-    
-    
     let secrets = secrets();
     let user = sign_up(&pool, "victim@example.com").await;
     let mut conn = pool.acquire().await.unwrap();
@@ -528,7 +509,6 @@ async fn password_reset_on_an_unverified_account_removes_pre_attached_access(poo
     .await
     .unwrap();
 
-    
     let (_, token) = accounts::request_password_reset(&mut conn, "victim@example.com")
         .await
         .unwrap()

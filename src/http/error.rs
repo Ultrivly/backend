@@ -1,6 +1,3 @@
-
-
-
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -67,7 +64,6 @@ impl ApiError {
         }
     }
 
-    
     pub fn internal(err: impl std::fmt::Display) -> Self {
         tracing::error!("internal error: {err:#}");
         Self::new(
@@ -128,7 +124,7 @@ impl From<AuthError> for ApiError {
             AuthError::WeakPassword(_) => {
                 Self::new(S::UNPROCESSABLE_ENTITY, "weak_password", message).field("password")
             }
-            
+
             AuthError::EmailTaken => Self::new(S::CONFLICT, "email_taken", message),
             AuthError::InvalidToken => Self::new(S::BAD_REQUEST, "invalid_token", message),
             AuthError::InvalidCode => Self::new(S::UNAUTHORIZED, "invalid_code", message),

@@ -1,13 +1,16 @@
-
-
+pub mod ai;
 pub mod audit;
 pub mod cases;
+pub mod channels;
 pub mod config;
+pub mod exports;
 pub mod http;
 pub mod identity;
 pub mod integrations;
 pub mod knowledge;
 pub mod platform;
+pub mod plugins;
+pub mod reporting;
 pub mod routing;
 pub mod worker;
 pub mod workflows;

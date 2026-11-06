@@ -11,6 +11,7 @@ pub const KINDS: &[&str] = &[
     "case.assigned",
     "case.message_added",
     "case.deleted",
+    "case.sla_breached",
     "contact.created",
     "article.published",
 ];

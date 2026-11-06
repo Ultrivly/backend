@@ -32,8 +32,7 @@ pub async fn create(
     Json(body): Json<CreateRequest>,
 ) -> ApiResult<impl IntoResponse> {
     require_org_access(&state, &session, org_id).await?;
-    
-    
+
     limit_key(&state, &format!("org:{org_id}:invitations"), 200, DAY).await?;
     limit_key(
         &state,

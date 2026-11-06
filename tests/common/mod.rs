@@ -1,10 +1,7 @@
-
-
-
-
 #![allow(dead_code)]
 
 pub mod app;
+pub mod org;
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha1::Sha1;
@@ -22,8 +19,6 @@ pub async fn create_user(pool: &PgPool) -> Uuid {
         .unwrap();
     id
 }
-
-
 
 pub async fn create_org(pool: &PgPool, slug: &'static str) -> (CreatedOrganization, Uuid) {
     let owner = create_user(pool).await;
@@ -55,7 +50,6 @@ pub async fn create_workspace(pool: &PgPool, org_id: Uuid, slug: &str) -> Uuid {
     id
 }
 
-
 pub async fn add_member(pool: &PgPool, org_id: Uuid) -> (Uuid, Uuid) {
     let user = create_user(pool).await;
     let membership = Uuid::now_v7();
@@ -70,7 +64,6 @@ pub async fn add_member(pool: &PgPool, org_id: Uuid) -> (Uuid, Uuid) {
     .unwrap();
     (user, membership)
 }
-
 
 pub async fn grant(
     pool: &PgPool,
@@ -91,7 +84,6 @@ pub async fn grant(
     .await
     .unwrap();
 }
-
 
 pub async fn member_with_role(
     pool: &PgPool,
@@ -121,7 +113,6 @@ pub async fn membership_id(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Uuid {
         .await
         .unwrap()
 }
-
 
 pub fn totp(secret_base32: &str, time: u64) -> String {
     let mut bits = 0u64;

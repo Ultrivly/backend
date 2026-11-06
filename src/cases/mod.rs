@@ -3,6 +3,8 @@ pub mod contacts;
 pub mod messages;
 pub mod portal;
 pub mod records;
+pub mod settings;
+pub mod views;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;

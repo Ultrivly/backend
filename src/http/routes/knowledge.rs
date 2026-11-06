@@ -21,7 +21,9 @@ pub async fn list_categories(
 ) -> ApiResult<impl IntoResponse> {
     let actor = org_actor(&state, &caller, org_id).await?;
     let mut conn = state.pool.acquire().await?;
-    Ok(Json(json!({ "categories": knowledge::list_categories(&mut conn, org_id, actor).await? })))
+    Ok(Json(
+        json!({ "categories": knowledge::list_categories(&mut conn, org_id, actor).await? }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -39,7 +41,8 @@ pub async fn create_category(
 ) -> ApiResult<impl IntoResponse> {
     let actor = org_actor(&state, &caller, org_id).await?;
     let mut conn = state.pool.acquire().await?;
-    let category = knowledge::save_category(&mut conn, org_id, actor, None, &body.name, body.position).await?;
+    let category =
+        knowledge::save_category(&mut conn, org_id, actor, None, &body.name, body.position).await?;
     Ok((StatusCode::CREATED, Json(json!({ "category": category }))))
 }
 
@@ -51,7 +54,15 @@ pub async fn update_category(
 ) -> ApiResult<impl IntoResponse> {
     let actor = org_actor(&state, &caller, org_id).await?;
     let mut conn = state.pool.acquire().await?;
-    let category = knowledge::save_category(&mut conn, org_id, actor, Some(id), &body.name, body.position).await?;
+    let category = knowledge::save_category(
+        &mut conn,
+        org_id,
+        actor,
+        Some(id),
+        &body.name,
+        body.position,
+    )
+    .await?;
     Ok(Json(json!({ "category": category })))
 }
 
@@ -99,7 +110,9 @@ pub async fn get_article(
 ) -> ApiResult<impl IntoResponse> {
     let actor = org_actor(&state, &caller, org_id).await?;
     let mut conn = state.pool.acquire().await?;
-    Ok(Json(json!({ "article": knowledge::get_article(&mut conn, org_id, actor, id).await? })))
+    Ok(Json(
+        json!({ "article": knowledge::get_article(&mut conn, org_id, actor, id).await? }),
+    ))
 }
 
 pub async fn update_article(
@@ -168,5 +181,7 @@ pub async fn help_article(
 ) -> ApiResult<impl IntoResponse> {
     limit_ip(&state, &client, "help_center", 300, Duration::from_secs(60)).await?;
     let mut conn = state.pool.acquire().await?;
-    Ok(Json(json!({ "article": knowledge::help_article(&mut conn, &org_slug, &slug).await? })))
+    Ok(Json(
+        json!({ "article": knowledge::help_article(&mut conn, &org_slug, &slug).await? }),
+    ))
 }

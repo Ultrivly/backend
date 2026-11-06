@@ -1,10 +1,3 @@
-
-
-
-
-
-
-
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -26,8 +19,6 @@ pub const MAX_PASSWORD_BYTES: usize = 1024;
 const EMAIL_VERIFICATION_TTL: Duration = Duration::from_secs(3 * 24 * 60 * 60);
 const PASSWORD_RESET_TTL: Duration = Duration::from_secs(60 * 60);
 pub(crate) const MFA_CHALLENGE_TTL: Duration = Duration::from_secs(5 * 60);
-
-
 
 const FREE_FAILURES: i32 = 5;
 
@@ -55,20 +46,17 @@ pub enum AuthError {
     Internal(#[from] anyhow::Error),
 }
 
-
 #[derive(Debug)]
 pub enum SignIn {
     Complete(NewSession),
-    
-    MfaRequired {
-        challenge: String,
-    },
+
+    MfaRequired { challenge: String },
 }
 
 #[derive(Debug)]
 pub struct SignUp {
     pub user_id: Uuid,
-    
+
     pub verification_token: String,
 }
 
@@ -141,8 +129,6 @@ pub async fn sign_in_with_password(
     .fetch_optional(&mut *conn)
     .await?;
 
-    
-    
     let stored_hash = user.as_ref().and_then(|(_, hash, _)| hash.clone());
     let password_ok = verify_password(password.to_string(), stored_hash).await?;
 
@@ -157,9 +143,6 @@ pub async fn sign_in_with_password(
     clear_failures(conn, &email_key).await?;
     finish_sign_in(conn, user_id, AuthMethod::Password, client).await
 }
-
-
-
 
 pub(crate) async fn finish_sign_in(
     conn: &mut PgConnection,
@@ -200,8 +183,6 @@ pub(crate) fn method_name(method: AuthMethod) -> &'static str {
     }
 }
 
-
-
 pub async fn verify_email(conn: &mut PgConnection, token: &str) -> Result<Uuid, AuthError> {
     let mut tx = conn.begin().await?;
     let (user_id, email, _) = take_token(&mut tx, "email_verification", token)
@@ -224,7 +205,6 @@ pub async fn verify_email(conn: &mut PgConnection, token: &str) -> Result<Uuid, 
     Ok(user_id)
 }
 
-
 pub async fn resend_email_verification(
     conn: &mut PgConnection,
     user_id: Uuid,
@@ -244,8 +224,6 @@ pub async fn resend_email_verification(
     .await?)
 }
 
-
-
 pub async fn request_password_reset(
     conn: &mut PgConnection,
     email: &str,
@@ -261,7 +239,7 @@ pub async fn request_password_reset(
     };
 
     let mut tx = conn.begin().await?;
-    
+
     sqlx::query("DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = 'password_reset'")
         .bind(user_id)
         .execute(&mut *tx)
@@ -278,12 +256,6 @@ pub async fn request_password_reset(
     tx.commit().await?;
     Ok(Some((user_id, token)))
 }
-
-
-
-
-
-
 
 pub async fn reset_password(
     conn: &mut PgConnection,
@@ -319,8 +291,6 @@ pub async fn reset_password(
     tx.commit().await?;
     Ok(user_id)
 }
-
-
 
 pub async fn change_password(
     conn: &mut PgConnection,
@@ -367,7 +337,6 @@ pub struct OrganizationSummary {
     pub name: String,
 }
 
-
 pub async fn profile(conn: &mut PgConnection, user_id: Uuid) -> Result<Profile, AuthError> {
     let (email, email_verified, display_name, has_password): (String, bool, String, bool) =
         sqlx::query_as(
@@ -396,8 +365,6 @@ pub async fn profile(conn: &mut PgConnection, user_id: Uuid) -> Result<Profile, 
     })
 }
 
-
-
 pub async fn confirm_password(
     conn: &mut PgConnection,
     user_id: Uuid,
@@ -410,7 +377,6 @@ pub async fn confirm_password(
             .await?;
     Ok(verify_password(password.to_string(), stored).await?)
 }
-
 
 pub async fn email_of(conn: &mut PgConnection, user_id: Uuid) -> sqlx::Result<String> {
     sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
@@ -476,8 +442,6 @@ async fn hash_password(password: String) -> anyhow::Result<String> {
     })
     .await?
 }
-
-
 
 static DUMMY_HASH: LazyLock<String> = LazyLock::new(|| {
     let hash: PasswordHash = Argon2::default()
@@ -563,7 +527,6 @@ pub(crate) async fn issue_token(
     Ok(token)
 }
 
-
 async fn take_token(
     conn: &mut PgConnection,
     purpose: &str,
@@ -578,7 +541,6 @@ async fn take_token(
     .fetch_optional(conn)
     .await
 }
-
 
 pub(crate) async fn record(
     conn: &mut PgConnection,

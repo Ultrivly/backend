@@ -1,6 +1,3 @@
-
-
-
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -11,7 +8,6 @@ use uuid::Uuid;
 use crate::platform::authz::{self, Permission};
 use crate::platform::secrets::{random_token, token_hash};
 
-
 pub const ABSOLUTE_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -21,11 +17,9 @@ const TOUCH_INTERVAL_SECS: f64 = 5.0 * 60.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthMethod {
     Password,
-    
-    Sso {
-        connection_id: Uuid,
-    },
-    
+
+    Sso { connection_id: Uuid },
+
     Social,
 }
 
@@ -46,7 +40,6 @@ impl AuthMethod {
     }
 }
 
-
 #[derive(Debug, Clone, Default)]
 pub struct ClientInfo {
     pub ip_address: Option<IpAddr>,
@@ -58,12 +51,10 @@ pub struct Session {
     pub id: Uuid,
     pub user_id: Uuid,
     pub method: AuthMethod,
-    
+
     pub mfa_verified: bool,
     pub expires_at: DateTime<Utc>,
 }
-
-
 
 #[derive(Debug)]
 pub struct NewSession {
@@ -111,10 +102,7 @@ pub(crate) async fn create(
     })
 }
 
-
-
 pub async fn authenticate(conn: &mut PgConnection, token: &str) -> sqlx::Result<Option<Session>> {
-    
     type Row = (Uuid, Uuid, String, Option<Uuid>, bool, DateTime<Utc>);
     let row: Option<Row> = sqlx::query_as(
         "UPDATE sessions s
@@ -161,7 +149,6 @@ pub struct SessionInfo {
     pub current: bool,
 }
 
-
 pub async fn list(
     conn: &mut PgConnection,
     user_id: Uuid,
@@ -206,7 +193,6 @@ pub async fn list(
         .collect())
 }
 
-
 pub async fn revoke_own(
     conn: &mut PgConnection,
     user_id: Uuid,
@@ -224,7 +210,6 @@ pub async fn revoke_own(
         == 1)
 }
 
-
 pub async fn revoke(conn: &mut PgConnection, session_id: Uuid) -> sqlx::Result<()> {
     sqlx::query("UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL")
         .bind(session_id)
@@ -232,7 +217,6 @@ pub async fn revoke(conn: &mut PgConnection, session_id: Uuid) -> sqlx::Result<(
         .await?;
     Ok(())
 }
-
 
 pub async fn revoke_all(
     conn: &mut PgConnection,
@@ -252,22 +236,12 @@ pub async fn revoke_all(
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum OrgAccessError {
-    
     #[error("this organization requires signing in with single sign-on")]
     SsoRequired,
-    
+
     #[error("this organization requires multi-factor authentication")]
     MfaRequired,
 }
-
-
-
-
-
-
-
-
-
 
 pub async fn check_org_access(
     conn: &mut PgConnection,

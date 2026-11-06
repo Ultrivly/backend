@@ -61,17 +61,28 @@ fn valid_content_type(value: &str) -> bool {
     matches!((parts.next(), parts.next()), (Some(a), Some(b)) if token(a) && token(b))
 }
 
+pub struct Upload<'a> {
+    pub case_id: Uuid,
+    pub message_id: Option<Uuid>,
+    pub file_name: &'a str,
+    pub content_type: &'a str,
+    pub bytes: Vec<u8>,
+}
+
 pub async fn upload(
     conn: &mut PgConnection,
     blobs: &BlobStore,
     org_id: Uuid,
     actor: Actor,
-    case_id: Uuid,
-    message_id: Option<Uuid>,
-    file_name: &str,
-    content_type: &str,
-    bytes: Vec<u8>,
+    upload: Upload<'_>,
 ) -> ServiceResult<Attachment> {
+    let Upload {
+        case_id,
+        message_id,
+        file_name,
+        content_type,
+        bytes,
+    } = upload;
     let file_name = sanitize_file_name(file_name)?;
     let content_type = content_type
         .split(';')

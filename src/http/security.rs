@@ -1,5 +1,3 @@
-
-
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
@@ -14,15 +12,8 @@ use crate::http::error::ApiError;
 use crate::identity::sessions::ClientInfo;
 use crate::platform::rate_limit::{self, Decision};
 
-
-
-
-
-
-
-
 pub async fn csrf(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    if is_saml_acs(request.uri().path())
+    if is_csrf_exempt(request.uri().path())
         || matches!(
             *request.method(),
             Method::GET | Method::HEAD | Method::OPTIONS
@@ -57,8 +48,11 @@ pub async fn csrf(State(state): State<AppState>, request: Request, next: Next) -
     next.run(request).await
 }
 
-fn is_saml_acs(path: &str) -> bool {
-    path.starts_with("/auth/saml/") && path.ends_with("/acs")
+fn is_csrf_exempt(path: &str) -> bool {
+    (path.starts_with("/auth/saml/") && path.ends_with("/acs"))
+        || path.starts_with("/api/v1/inbound/")
+        || path.starts_with("/api/v1/chat/")
+        || path == "/api/v1/mail/events"
 }
 
 fn has_our_cookies(state: &AppState, headers: &HeaderMap) -> bool {
@@ -68,8 +62,6 @@ fn has_our_cookies(state: &AppState, headers: &HeaderMap) -> bool {
         .filter_map(|v| v.to_str().ok())
         .any(|c| c.contains(state.cookies.session) || c.contains(state.cookies.mfa))
 }
-
-
 
 pub fn security_headers(https: bool) -> Vec<(HeaderName, HeaderValue)> {
     let mut headers = vec![
@@ -107,9 +99,6 @@ pub fn security_headers(https: bool) -> Vec<(HeaderName, HeaderValue)> {
     headers
 }
 
-
-
-
 pub struct Client(pub ClientInfo);
 
 impl FromRequestParts<AppState> for Client {
@@ -136,7 +125,7 @@ impl FromRequestParts<AppState> for Client {
     }
 }
 
-fn forwarded_ip(headers: &HeaderMap, hops: usize) -> Option<IpAddr> {
+pub fn forwarded_ip(headers: &HeaderMap, hops: usize) -> Option<IpAddr> {
     if hops == 0 {
         return None;
     }
@@ -158,7 +147,6 @@ impl Client {
         self.0.ip_address.expect("always set by the extractor")
     }
 }
-
 
 pub async fn limit_ip(
     state: &AppState,
@@ -195,13 +183,13 @@ mod tests {
             "6.6.6.6, 203.0.113.9, 10.0.0.2".parse().unwrap(),
         );
         assert_eq!(forwarded_ip(&headers, 0), None);
-        
+
         assert_eq!(forwarded_ip(&headers, 1), Some("10.0.0.2".parse().unwrap()));
         assert_eq!(
             forwarded_ip(&headers, 2),
             Some("203.0.113.9".parse().unwrap())
         );
-        
+
         assert_eq!(forwarded_ip(&headers, 5), None);
     }
 }

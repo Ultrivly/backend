@@ -1,5 +1,3 @@
-
-
 use sqlx::PgPool;
 use ultrivly::audit::Actor;
 use ultrivly::identity::roles::{self, NewRole, RoleChanges, RoleError};
@@ -69,7 +67,6 @@ async fn admin_creates_lists_updates_and_deletes_a_custom_role(pool: PgPool) {
         [Permission::ReportsView, Permission::DataExport]
     );
 
-    
     let member = member_with_role(&pool, org.org_id, role.id, None).await;
     let held = authz::effective_permissions(&mut conn, org.org_id, member, None)
         .await
@@ -130,7 +127,6 @@ async fn nobody_can_grant_permissions_they_do_not_hold(pool: PgPool) {
     let (org, owner) = create_org(&pool, "acme").await;
     let mut conn = pool.acquire().await.unwrap();
 
-    
     let manager_role = roles::create_role(
         &mut conn,
         org.org_id,
@@ -166,7 +162,6 @@ async fn nobody_can_grant_permissions_they_do_not_hold(pool: PgPool) {
         other => panic!("unexpected error: {other}"),
     }
 
-    
     let viewers = roles::create_role(
         &mut conn,
         org.org_id,
@@ -229,7 +224,6 @@ async fn names_are_unique_per_org_ignoring_case(pool: PgPool) {
         permissions: &[Permission::CasesRead],
     };
 
-    
     let err = roles::create_role(
         &mut conn,
         acme.org_id,
@@ -246,12 +240,11 @@ async fn names_are_unique_per_org_ignoring_case(pool: PgPool) {
     let first = roles::create_role(&mut conn, acme.org_id, Actor::User(acme_owner), new())
         .await
         .unwrap();
-    
+
     roles::create_role(&mut conn, globex.org_id, Actor::User(globex_owner), new())
         .await
         .unwrap();
 
-    
     roles::update_role(
         &mut conn,
         acme.org_id,
@@ -299,7 +292,6 @@ async fn roles_of_another_org_are_not_found(pool: PgPool) {
     .unwrap_err();
     assert!(matches!(err, RoleError::NotFound), "{err}");
 
-    
     let held = authz::effective_permissions(&mut conn, globex.org_id, acme_owner, None)
         .await
         .unwrap();
@@ -327,7 +319,6 @@ async fn workspace_roles_apply_only_in_their_workspace(pool: PgPool) {
         assert!(held.is_empty(), "{scope:?}");
     }
 
-    
     sqlx::query("UPDATE memberships SET status = 'suspended' WHERE user_id = $1")
         .bind(owner)
         .execute(&pool)

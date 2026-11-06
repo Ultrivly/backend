@@ -8,7 +8,9 @@ use crate::audit::Actor;
 use crate::identity::is_valid_slug;
 use crate::identity::orgs::{record, require_member};
 use crate::platform::authz::{self, Permission};
-use crate::platform::error::{ServiceError, ServiceResult, conflict, invalid, text, unique_violation};
+use crate::platform::error::{
+    ServiceError, ServiceResult, conflict, invalid, text, unique_violation,
+};
 use crate::platform::events::{self, Cause};
 use crate::platform::page::Page;
 
@@ -70,7 +72,11 @@ async fn reader(conn: &mut PgConnection, org_id: Uuid, actor: Actor) -> ServiceR
     })
 }
 
-pub async fn list_categories(conn: &mut PgConnection, org_id: Uuid, actor: Actor) -> ServiceResult<Vec<Category>> {
+pub async fn list_categories(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+) -> ServiceResult<Vec<Category>> {
     require_member(conn, org_id, actor).await?;
     Ok(sqlx::query_as("SELECT id, name, position, created_at FROM kb_categories WHERE org_id = $1 ORDER BY position, name")
         .bind(org_id)
@@ -122,12 +128,26 @@ pub async fn save_category(
             }
         })?
         .ok_or(ServiceError::NotFound)?;
-    record(&mut tx, org_id, actor, "kb_category.saved", "kb_category", id, json!({ "name": name })).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "kb_category.saved",
+        "kb_category",
+        id,
+        json!({ "name": name }),
+    )
+    .await?;
     tx.commit().await?;
     Ok(category)
 }
 
-pub async fn delete_category(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uuid) -> ServiceResult<()> {
+pub async fn delete_category(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    id: Uuid,
+) -> ServiceResult<()> {
     let mut tx = conn.begin().await?;
     authz::require(&mut tx, org_id, actor, Permission::KnowledgeEdit).await?;
     let deleted = sqlx::query("DELETE FROM kb_categories WHERE org_id = $1 AND id = $2")
@@ -139,7 +159,16 @@ pub async fn delete_category(conn: &mut PgConnection, org_id: Uuid, actor: Actor
     if deleted == 0 {
         return Err(ServiceError::NotFound);
     }
-    record(&mut tx, org_id, actor, "kb_category.deleted", "kb_category", id, json!({})).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "kb_category.deleted",
+        "kb_category",
+        id,
+        json!({}),
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -188,7 +217,12 @@ pub async fn list_articles(
     .await?)
 }
 
-pub async fn get_article(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uuid) -> ServiceResult<Article> {
+pub async fn get_article(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    id: Uuid,
+) -> ServiceResult<Article> {
     let reader = reader(conn, org_id, actor).await?;
     let article = load(conn, org_id, id).await?;
     let visible = match reader {
@@ -196,16 +230,24 @@ pub async fn get_article(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id
         Reader::Internal => article.state == "published",
         Reader::Public => article.state == "published" && article.visibility == "public",
     };
-    if visible { Ok(article) } else { Err(ServiceError::NotFound) }
+    if visible {
+        Ok(article)
+    } else {
+        Err(ServiceError::NotFound)
+    }
 }
 
 async fn load(conn: &mut PgConnection, org_id: Uuid, id: Uuid) -> ServiceResult<Article> {
-    sqlx::query_as(concat!("SELECT ", article_columns!(), " FROM kb_articles WHERE org_id = $1 AND id = $2"))
-        .bind(org_id)
-        .bind(id)
-        .fetch_optional(conn)
-        .await?
-        .ok_or(ServiceError::NotFound)
+    sqlx::query_as(concat!(
+        "SELECT ",
+        article_columns!(),
+        " FROM kb_articles WHERE org_id = $1 AND id = $2"
+    ))
+    .bind(org_id)
+    .bind(id)
+    .fetch_optional(conn)
+    .await?
+    .ok_or(ServiceError::NotFound)
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -236,7 +278,11 @@ fn slugify(title: &str) -> String {
     }
     let slug: String = slug.trim_end_matches('-').chars().take(100).collect();
     let slug = slug.trim_end_matches('-').to_string();
-    if slug.is_empty() { "article".into() } else { slug }
+    if slug.is_empty() {
+        "article".into()
+    } else {
+        slug
+    }
 }
 
 fn check_visibility(value: &str) -> ServiceResult<()> {
@@ -259,7 +305,10 @@ fn check_slug(slug: &str) -> ServiceResult<()> {
     if is_valid_slug(slug) {
         Ok(())
     } else {
-        Err(invalid("slug", "must be lowercase letters, digits, and hyphens"))
+        Err(invalid(
+            "slug",
+            "must be lowercase letters, digits, and hyphens",
+        ))
     }
 }
 
@@ -279,15 +328,21 @@ pub async fn create_article(
 
     let mut tx = conn.begin().await?;
     authz::require(&mut tx, org_id, actor, Permission::KnowledgeEdit).await?;
-    let taken: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM kb_articles WHERE org_id = $1 AND slug = $2)")
-        .bind(org_id)
-        .bind(&slug)
-        .fetch_one(&mut *tx)
-        .await?;
+    let taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM kb_articles WHERE org_id = $1 AND slug = $2)",
+    )
+    .bind(org_id)
+    .bind(&slug)
+    .fetch_one(&mut *tx)
+    .await?;
     let id = Uuid::now_v7();
     if taken {
         let suffix = id.simple().to_string();
-        slug = format!("{}-{}", slug.chars().take(100).collect::<String>(), &suffix[suffix.len() - 6..]);
+        slug = format!(
+            "{}-{}",
+            slug.chars().take(100).collect::<String>(),
+            &suffix[suffix.len() - 6..]
+        );
     }
     let author = match actor {
         Actor::User(id) => Some(id),
@@ -314,7 +369,16 @@ pub async fn create_article(
             err.into()
         }
     })?;
-    record(&mut tx, org_id, actor, "article.created", "article", id, json!({ "title": title })).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "article.created",
+        "article",
+        id,
+        json!({ "title": title }),
+    )
+    .await?;
     let article = load(&mut tx, org_id, id).await?;
     tx.commit().await?;
     Ok(article)
@@ -327,7 +391,11 @@ pub async fn update_article(
     id: Uuid,
     input: ArticleInput,
 ) -> ServiceResult<Article> {
-    let title = input.title.as_deref().map(|t| text("title", t, 300)).transpose()?;
+    let title = input
+        .title
+        .as_deref()
+        .map(|t| text("title", t, 300))
+        .transpose()?;
     if let Some(body) = &input.body {
         check_body(body)?;
     }
@@ -340,7 +408,10 @@ pub async fn update_article(
     let mut tx = conn.begin().await?;
     authz::require(&mut tx, org_id, actor, Permission::KnowledgeEdit).await?;
     let current = load(&mut tx, org_id, id).await?;
-    if input.visibility.as_deref() == Some("public") && current.visibility != "public" && current.state == "published" {
+    if input.visibility.as_deref() == Some("public")
+        && current.visibility != "public"
+        && current.state == "published"
+    {
         authz::require(&mut tx, org_id, actor, Permission::KnowledgePublish).await?;
     }
     let editor = match actor {
@@ -374,13 +445,28 @@ pub async fn update_article(
             err.into()
         }
     })?;
-    record(&mut tx, org_id, actor, "article.updated", "article", id, json!({ "title": title })).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "article.updated",
+        "article",
+        id,
+        json!({ "title": title }),
+    )
+    .await?;
     let article = load(&mut tx, org_id, id).await?;
     tx.commit().await?;
     Ok(article)
 }
 
-pub async fn set_state(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uuid, state: &str) -> ServiceResult<Article> {
+pub async fn set_state(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    id: Uuid,
+    state: &str,
+) -> ServiceResult<Article> {
     if !matches!(state, "draft" | "published" | "archived") {
         return Err(invalid("state", "must be draft, published, or archived"));
     }
@@ -400,17 +486,39 @@ pub async fn set_state(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: 
     if updated == 0 {
         return Err(ServiceError::NotFound);
     }
-    record(&mut tx, org_id, actor, &format!("article.{state}"), "article", id, json!({})).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        &format!("article.{state}"),
+        "article",
+        id,
+        json!({}),
+    )
+    .await?;
     if state == "published" {
-        events::emit(&mut tx, org_id, "article.published", "article", id, json!({ "article_id": id }), Cause::default())
-            .await?;
+        events::emit(
+            &mut tx,
+            org_id,
+            "article.published",
+            "article",
+            id,
+            json!({ "article_id": id }),
+            Cause::default(),
+        )
+        .await?;
     }
     let article = load(&mut tx, org_id, id).await?;
     tx.commit().await?;
     Ok(article)
 }
 
-pub async fn delete_article(conn: &mut PgConnection, org_id: Uuid, actor: Actor, id: Uuid) -> ServiceResult<()> {
+pub async fn delete_article(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    actor: Actor,
+    id: Uuid,
+) -> ServiceResult<()> {
     let mut tx = conn.begin().await?;
     authz::require(&mut tx, org_id, actor, Permission::KnowledgeDelete).await?;
     let deleted = sqlx::query("DELETE FROM kb_articles WHERE org_id = $1 AND id = $2")
@@ -422,7 +530,16 @@ pub async fn delete_article(conn: &mut PgConnection, org_id: Uuid, actor: Actor,
     if deleted == 0 {
         return Err(ServiceError::NotFound);
     }
-    record(&mut tx, org_id, actor, "article.deleted", "article", id, json!({})).await?;
+    record(
+        &mut tx,
+        org_id,
+        actor,
+        "article.deleted",
+        "article",
+        id,
+        json!({}),
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -461,7 +578,11 @@ pub async fn help_center(
     .await?)
 }
 
-pub async fn help_article(conn: &mut PgConnection, org_slug: &str, slug: &str) -> ServiceResult<PublicArticle> {
+pub async fn help_article(
+    conn: &mut PgConnection,
+    org_slug: &str,
+    slug: &str,
+) -> ServiceResult<PublicArticle> {
     sqlx::query_as(
         "SELECT a.id, a.category_id, a.title, a.slug, a.body, a.published_at, a.updated_at
          FROM kb_articles a JOIN organizations o ON o.id = a.org_id AND o.deleted_at IS NULL
@@ -480,7 +601,10 @@ mod tests {
 
     #[test]
     fn slugs_come_from_titles() {
-        assert_eq!(slugify("Reset your VPN password!"), "reset-your-vpn-password");
+        assert_eq!(
+            slugify("Reset your VPN password!"),
+            "reset-your-vpn-password"
+        );
         assert_eq!(slugify("¿¿??"), "article");
     }
 }

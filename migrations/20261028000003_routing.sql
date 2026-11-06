@@ -1,5 +1,3 @@
-
-
 CREATE TABLE departments (
     id          uuid PRIMARY KEY,
     org_id      uuid NOT NULL REFERENCES organizations (id),
@@ -38,12 +36,11 @@ CREATE TABLE team_members (
     created_at  timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (team_id, user_id),
     FOREIGN KEY (org_id, team_id) REFERENCES teams (org_id, id) ON DELETE CASCADE,
-    
+
     FOREIGN KEY (org_id, user_id) REFERENCES memberships (org_id, user_id) ON DELETE CASCADE
 );
 
 CREATE INDEX team_members_user_id_idx ON team_members (org_id, user_id);
-
 
 CREATE TABLE queues (
     id           uuid PRIMARY KEY,
@@ -51,7 +48,7 @@ CREATE TABLE queues (
     workspace_id uuid NOT NULL,
     team_id      uuid,
     name         text NOT NULL CHECK (length(trim(name)) > 0),
-    
+
     criteria     jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(criteria) = 'object'),
     position     integer NOT NULL DEFAULT 0,
     created_at   timestamptz NOT NULL DEFAULT now(),

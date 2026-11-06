@@ -1,5 +1,3 @@
-
-
 use sqlx::PgPool;
 use ultrivly::identity::{self, CreateOrganizationError, NewOrganization};
 use ultrivly::platform::authz::Permission;
@@ -61,7 +59,6 @@ async fn creates_a_ready_to_use_organization(pool: PgPool) {
         6
     );
 
-    
     let owner_permissions: Vec<String> = sqlx::query_scalar(
         "SELECT rp.permission
          FROM memberships m
@@ -78,7 +75,6 @@ async fn creates_a_ready_to_use_organization(pool: PgPool) {
     expected.sort();
     assert_eq!(owner_permissions, expected);
 
-    
     let default_status: (i64, String) = sqlx::query_as(
         "SELECT count(*) OVER (), key FROM case_statuses WHERE org_id = $1 ORDER BY is_default DESC LIMIT 1",
     )
@@ -129,7 +125,6 @@ async fn taken_slug_is_rejected_and_nothing_is_left_behind(pool: PgPool) {
         .unwrap_err();
     assert!(matches!(err, CreateOrganizationError::SlugTaken), "{err}");
 
-    
     let (orgs, roles, memberships): (i64, i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM organizations), (SELECT count(*) FROM roles),
                 (SELECT count(*) FROM memberships)",

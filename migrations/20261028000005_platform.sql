@@ -1,10 +1,6 @@
-
-
-
-
 CREATE TABLE jobs (
     id           uuid PRIMARY KEY,
-    
+
     org_id       uuid REFERENCES organizations (id),
     kind         text NOT NULL,
     payload      jsonb NOT NULL DEFAULT '{}',
@@ -31,7 +27,6 @@ CREATE UNIQUE INDEX jobs_dedupe_key ON jobs (kind, dedupe_key)
 CREATE TRIGGER jobs_updated_at BEFORE UPDATE ON jobs
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-
 CREATE TABLE domain_events (
     id             uuid PRIMARY KEY,
     org_id         uuid NOT NULL REFERENCES organizations (id),
@@ -39,7 +34,7 @@ CREATE TABLE domain_events (
     subject_type   text NOT NULL,
     subject_id     uuid NOT NULL,
     data           jsonb NOT NULL DEFAULT '{}',
-    
+
     causation_id   uuid,
     depth          integer NOT NULL DEFAULT 0 CHECK (depth >= 0),
     occurred_at    timestamptz NOT NULL DEFAULT now(),
@@ -49,10 +44,9 @@ CREATE TABLE domain_events (
 CREATE INDEX domain_events_undispatched_idx ON domain_events (occurred_at) WHERE dispatched_at IS NULL;
 CREATE INDEX domain_events_subject_idx ON domain_events (org_id, subject_type, subject_id);
 
-
 CREATE TABLE audit_events (
     id          uuid PRIMARY KEY,
-    
+
     org_id      uuid REFERENCES organizations (id),
     actor_kind  text NOT NULL CHECK (actor_kind IN ('user', 'contact', 'api_credential', 'system', 'workflow', 'plugin', 'ai', 'operator')),
     actor_id    uuid,
@@ -69,13 +63,12 @@ CREATE TABLE audit_events (
 CREATE INDEX audit_events_org_idx ON audit_events (org_id, occurred_at DESC);
 CREATE INDEX audit_events_target_idx ON audit_events (org_id, target_type, target_id);
 
-
 CREATE TABLE idempotency_keys (
     org_id          uuid NOT NULL REFERENCES organizations (id),
-    
+
     principal_id    uuid NOT NULL,
     key             text NOT NULL CHECK (length(key) BETWEEN 1 AND 255),
-    
+
     request_hash    bytea NOT NULL,
     response_status smallint,
     response_body   jsonb,

@@ -185,6 +185,7 @@ pub async fn authenticate(
          FROM organizations o
          WHERE c.token_hash = $1 AND o.id = c.org_id AND o.deleted_at IS NULL
            AND c.revoked_at IS NULL AND (c.expires_at IS NULL OR c.expires_at > now())
+           AND NOT EXISTS (SELECT 1 FROM plugin_installs p WHERE p.api_credential_id = c.id AND NOT p.enabled)
          RETURNING c.id, c.org_id",
     )
     .bind(token_hash(token))

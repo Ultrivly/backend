@@ -1,14 +1,8 @@
-
-
-
-
 use crate::platform::mail::Email;
 
 fn link(public_url: &str, path: &str, token: &str) -> String {
     format!("{}{path}#token={token}", public_url.trim_end_matches('/'))
 }
-
-
 
 fn untrusted(text: &str) -> String {
     let flat: String = text
@@ -32,6 +26,8 @@ pub fn verify_email(to: &str, public_url: &str, token: &str) -> Email {
              The link expires in 3 days. If you did not create an account, ignore this email.\n",
             link(public_url, "/verify-email", token)
         ),
+        bypass_suppression: true,
+        ..Email::default()
     }
 }
 
@@ -46,10 +42,10 @@ pub fn password_reset(to: &str, public_url: &str, token: &str) -> Email {
              this email; your password has not changed.\n",
             link(public_url, "/reset-password", token)
         ),
+        bypass_suppression: true,
+        ..Email::default()
     }
 }
-
-
 
 pub fn sign_up_attempted(to: &str, public_url: &str) -> Email {
     let base = public_url.trim_end_matches('/');
@@ -61,6 +57,7 @@ pub fn sign_up_attempted(to: &str, public_url: &str) -> Email {
              already have one. Sign in at {base}/sign-in, or reset your password at\n\
              {base}/forgot-password. If this was not you, you can ignore this email.\n"
         ),
+        ..Email::default()
     }
 }
 
@@ -72,6 +69,8 @@ pub fn password_changed(to: &str) -> Email {
                were signed out. If you did not do this, reset your password immediately and\n\
                contact your administrator.\n"
             .into(),
+        bypass_suppression: true,
+        ..Email::default()
     }
 }
 
@@ -82,6 +81,8 @@ pub fn mfa_disabled(to: &str) -> Email {
         body: "Two-step verification was just turned off for your Ultrivly account. If you\n\
                did not do this, reset your password immediately and contact your administrator.\n"
             .into(),
+        bypass_suppression: true,
+        ..Email::default()
     }
 }
 
@@ -97,6 +98,7 @@ pub fn invitation(to: &str, public_url: &str, token: &str, org_name: &str, invit
             untrusted(org_name),
             link(public_url, "/accept-invitation", token)
         ),
+        ..Email::default()
     }
 }
 

@@ -1,5 +1,3 @@
-
-
 pub mod accounts;
 pub mod emails;
 pub mod invitations;
@@ -25,7 +23,7 @@ pub struct NewOrganization<'a> {
     pub slug: &'a str,
     pub workspace_name: &'a str,
     pub workspace_slug: &'a str,
-    
+
     pub owner_user_id: Uuid,
 }
 
@@ -38,7 +36,6 @@ pub struct CreatedOrganization {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CreateOrganizationError {
-    
     #[error("{field} {reason}")]
     Invalid {
         field: &'static str,
@@ -51,9 +48,6 @@ pub enum CreateOrganizationError {
     #[error(transparent)]
     Database(#[from] sqlx::Error),
 }
-
-
-
 
 pub async fn create_organization(
     conn: &mut PgConnection,
@@ -129,7 +123,6 @@ pub async fn create_organization(
     .execute(&mut *tx)
     .await?;
 
-    
     sqlx::query(
         "INSERT INTO membership_roles (org_id, membership_id, role_id, workspace_id)
          VALUES ($1, $2, $3, NULL)",
@@ -173,8 +166,6 @@ fn validate_name(field: &'static str, name: &str) -> Result<(), CreateOrganizati
     }
     Ok(())
 }
-
-
 
 pub(crate) fn is_valid_slug(slug: &str) -> bool {
     (1..=63).contains(&slug.len())

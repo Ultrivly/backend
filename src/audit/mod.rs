@@ -1,24 +1,13 @@
-
-
-
-
 use serde_json::Value;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Actor {
     User(Uuid),
-    ApiCredential {
-        id: Uuid,
-        org_id: Uuid,
-    },
-    Workflow {
-        id: Uuid,
-        org_id: Uuid,
-    },
-    
+    ApiCredential { id: Uuid, org_id: Uuid },
+    Workflow { id: Uuid, org_id: Uuid },
+
     System,
 }
 
@@ -42,10 +31,9 @@ impl Actor {
 }
 
 pub struct Event<'a> {
-    
     pub org_id: Option<Uuid>,
     pub actor: Actor,
-    
+
     pub action: &'a str,
     pub target_type: &'a str,
     pub target_id: Uuid,

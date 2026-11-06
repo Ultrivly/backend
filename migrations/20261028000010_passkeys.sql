@@ -1,11 +1,5 @@
-
-
-
-
 ALTER TABLE mfa_factors ADD COLUMN credential_id bytea;
 CREATE UNIQUE INDEX mfa_factors_credential_key ON mfa_factors (credential_id) WHERE credential_id IS NOT NULL;
-
-
 
 CREATE TABLE webauthn_ceremonies (
     id               uuid PRIMARY KEY,

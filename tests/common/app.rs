@@ -23,6 +23,8 @@ pub const ORIGIN: &str = "https://ultrivly.test";
 pub const SESSION: &str = "__Host-ultrivly_session";
 pub const PASSWORD: &str = "correct horse battery staple";
 
+pub const MAIL_EVENTS_SECRET: &str = "whsec_mail_events_test";
+
 pub struct App {
     pub router: Router,
     pub pool: PgPool,
@@ -63,17 +65,36 @@ impl App {
     }
 
     pub async fn with_ip(pool: PgPool, ip: [u8; 4]) -> Self {
+        Self::build(
+            pool,
+            ip,
+            http::throttle::Limits {
+                per_caller: 1200,
+                per_ip: 3000,
+            },
+        )
+        .await
+    }
+
+    pub async fn with_limits(pool: PgPool, limits: http::throttle::Limits) -> Self {
+        Self::build(pool, [203, 0, 113, 7], limits).await
+    }
+
+    async fn build(pool: PgPool, ip: [u8; 4], limits: http::throttle::Limits) -> Self {
         let secrets = Secrets::from_base64_key(&Secrets::generate_key()).unwrap();
         let net = HttpClient::new(NetPolicy::new(Deployment::Cloud, &[])).unwrap();
         let sso = Sso::new(secrets.clone(), net, ORIGIN, vec![]).unwrap();
+        let blobs = BlobStore::in_memory();
         let state = AppState::new(
             pool.clone(),
             secrets.clone(),
             sso,
-            BlobStore::in_memory(),
+            blobs.clone(),
             Settings {
                 public_url: ORIGIN.parse().unwrap(),
                 trusted_proxy_hops: 0,
+                mail_events_secret: Some(MAIL_EVENTS_SECRET.into()),
+                limits,
             },
         )
         .unwrap();
@@ -84,8 +105,12 @@ impl App {
             secrets,
             mailer,
             public_url: ORIGIN.into(),
-            blobs: None,
-            http: HttpClient::new(NetPolicy::new(Deployment::SelfHosted, &["127.0.0.1".into()])).unwrap(),
+            blobs: Some(blobs),
+            http: HttpClient::new(NetPolicy::new(
+                Deployment::SelfHosted,
+                &["127.0.0.1".into()],
+            ))
+            .unwrap(),
             id: "test".into(),
         };
         Self {
@@ -96,7 +121,6 @@ impl App {
         }
     }
 
-    
     pub async fn call(
         &self,
         method: Method,
@@ -178,6 +202,62 @@ impl App {
         }
     }
 
+    pub async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        body: Vec<u8>,
+        headers: &[(&str, &str)],
+        session: Option<&str>,
+    ) -> Reply {
+        let mut request = Request::builder().method(method).uri(path);
+        if let Some(token) = session {
+            request = request
+                .header(header::ORIGIN, ORIGIN)
+                .header(header::COOKIE, format!("{SESSION}={token}"));
+        }
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = self
+            .router
+            .clone()
+            .oneshot(request.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        Reply {
+            status,
+            headers,
+            body,
+        }
+    }
+
+    pub async fn raw_bytes(
+        &self,
+        method: Method,
+        path: &str,
+        session: &str,
+    ) -> (StatusCode, Vec<u8>) {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::COOKIE, format!("{SESSION}={session}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = self.router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, bytes.to_vec())
+    }
+
     pub async fn upload(
         &self,
         path: &str,
@@ -208,7 +288,6 @@ impl App {
         }
     }
 
-    
     pub async fn deliver(&self) -> Vec<Email> {
         while self.worker.run_once().await.unwrap() {}
         std::mem::take(&mut *self.outbox.lock().unwrap())
@@ -254,7 +333,6 @@ impl App {
         reply.cookie_value(SESSION).expect("session cookie")
     }
 }
-
 
 pub fn token_in(emails: &[Email], to: &str) -> String {
     let email = emails

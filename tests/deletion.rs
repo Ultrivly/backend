@@ -1,5 +1,3 @@
-
-
 use std::time::Duration;
 
 use sqlx::PgPool;
@@ -13,11 +11,10 @@ use uuid::Uuid;
 mod common;
 use common::{create_org, create_workspace, member_with_role, role_id};
 
-
 struct Fixture {
     org_id: Uuid,
     workspace_id: Uuid,
-    
+
     owner: Actor,
     case_id: Uuid,
     attachment_id: Uuid,
@@ -107,11 +104,8 @@ async fn deletion_requires_matching_confirmation(pool: PgPool) {
     let again = deletion::schedule(&mut conn, org, "acme", actor, DEFAULT_RETENTION).await;
     assert!(matches!(again, Err(DeletionError::AlreadyScheduled)));
 
-    
-    
     deletion::restore(&mut conn, org, actor).await.unwrap();
 
-    
     let case = Target::case(f.org_id, f.case_id);
     let err = deletion::schedule(&mut conn, case, "1043", actor, DEFAULT_RETENTION).await;
     assert!(matches!(err, Err(DeletionError::ConfirmationMismatch)));
@@ -135,7 +129,6 @@ async fn other_orgs_rows_are_not_reachable(pool: PgPool) {
     let b = seed(&pool, &blobs, "globex").await;
     let mut conn = pool.acquire().await.unwrap();
 
-    
     let result = deletion::schedule(
         &mut conn,
         Target::case(a.org_id, b.case_id),
@@ -165,7 +158,6 @@ async fn restore_works_only_during_retention(pool: PgPool) {
         Err(DeletionError::NotScheduled)
     ));
 
-    
     deletion::schedule(&mut conn, case, "1042", Actor::System, DEFAULT_RETENTION)
         .await
         .unwrap();
@@ -175,7 +167,6 @@ async fn restore_works_only_during_retention(pool: PgPool) {
     );
     assert!(blobs.exists(&f.attachment_key).await.unwrap());
 
-    
     deletion::restore(&mut conn, case, Actor::System)
         .await
         .unwrap();
@@ -193,7 +184,7 @@ async fn purging_an_organization_removes_all_its_data_and_files(pool: PgPool) {
     let blobs = BlobStore::in_memory();
     let doomed = seed(&pool, &blobs, "acme").await;
     let survivor = seed(&pool, &blobs, "globex").await;
-    
+
     let orphan_key = format!("org/{}/uploads/tmp", doomed.org_id);
     blobs.put(&orphan_key, b"x".to_vec()).await.unwrap();
 
@@ -239,7 +230,6 @@ async fn purging_an_organization_removes_all_its_data_and_files(pool: PgPool) {
         0
     );
 
-    
     let platform_audit = count(
         &pool,
         "SELECT count(*) FROM audit_events WHERE org_id IS NULL AND action = 'organization.purged' AND target_id = $1",
@@ -248,7 +238,6 @@ async fn purging_an_organization_removes_all_its_data_and_files(pool: PgPool) {
     .await;
     assert_eq!(platform_audit, 1);
 
-    
     assert_eq!(
         count(
             &pool,
@@ -323,7 +312,7 @@ async fn purging_a_workspace_removes_its_cases_but_keeps_the_org(pool: PgPool) {
         0
     );
     assert!(!blobs.exists(&f.attachment_key).await.unwrap());
-    
+
     assert_eq!(
         count(
             &pool,
@@ -344,7 +333,6 @@ async fn deleting_requires_the_matching_permission(pool: PgPool) {
     let mut conn = pool.acquire().await.unwrap();
     let case = Target::case(f.org_id, f.case_id);
 
-    
     for (target, confirmation) in [
         (case, "1042"),
         (Target::organization(f.org_id), "acme"),
@@ -357,7 +345,7 @@ async fn deleting_requires_the_matching_permission(pool: PgPool) {
             "{target:?}: {err:?}"
         );
     }
-    
+
     deletion::schedule(
         &mut conn,
         Target::attachment(f.org_id, f.attachment_id),
@@ -368,7 +356,6 @@ async fn deleting_requires_the_matching_permission(pool: PgPool) {
     .await
     .unwrap();
 
-    
     let deleters = roles::create_role(
         &mut conn,
         f.org_id,
@@ -386,7 +373,6 @@ async fn deleting_requires_the_matching_permission(pool: PgPool) {
     let err = deletion::schedule(&mut conn, case, "1042", other_deleter, DEFAULT_RETENTION).await;
     assert!(matches!(err, Err(DeletionError::Forbidden)), "{err:?}");
 
-    
     let local_deleter =
         Actor::User(member_with_role(&pool, f.org_id, deleters.id, Some(f.workspace_id)).await);
     deletion::schedule(&mut conn, case, "1042", local_deleter, DEFAULT_RETENTION)

@@ -1,11 +1,3 @@
-
-
-
-
-
-
-
-
 use std::time::Duration;
 
 use serde_json::json;
@@ -40,7 +32,6 @@ pub struct Passkeys {
 }
 
 impl Passkeys {
-    
     pub fn new(public_url: &Url, secrets: Secrets) -> anyhow::Result<Self> {
         let host = public_url
             .host_str()
@@ -51,8 +42,6 @@ impl Passkeys {
         Ok(Self { webauthn, secrets })
     }
 
-    
-    
     pub async fn start_registration(
         &self,
         conn: &mut PgConnection,
@@ -90,8 +79,6 @@ impl Passkeys {
         Ok((id, options))
     }
 
-    
-    
     pub async fn finish_registration(
         &self,
         conn: &mut PgConnection,
@@ -157,7 +144,6 @@ impl Passkeys {
         .await
     }
 
-    
     pub async fn remove(
         conn: &mut PgConnection,
         user_id: Uuid,
@@ -187,8 +173,6 @@ impl Passkeys {
         Ok(())
     }
 
-    
-    
     pub async fn start_challenge(
         &self,
         conn: &mut PgConnection,
@@ -222,8 +206,6 @@ impl Passkeys {
         Ok((id, options))
     }
 
-    
-    
     pub async fn complete_challenge(
         &self,
         conn: &mut PgConnection,
@@ -248,7 +230,6 @@ impl Passkeys {
             return Err(MfaError::InvalidCode);
         };
 
-        
         for (factor_id, mut passkey) in self.load(&mut tx, pending.user_id).await? {
             if passkey.cred_id() == result.cred_id() {
                 passkey.update_credential(&result);
@@ -318,7 +299,6 @@ impl Passkeys {
         Ok(id)
     }
 
-    
     async fn take_ceremony(
         &self,
         conn: &mut PgConnection,

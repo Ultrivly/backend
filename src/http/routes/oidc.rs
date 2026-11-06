@@ -1,11 +1,3 @@
-
-
-
-
-
-
-
-
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -31,9 +23,8 @@ const STATE_COOKIE_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Deserialize)]
 pub struct StartQuery {
-    
     provider: Option<String>,
-    
+
     org: Option<String>,
     redirect_to: Option<String>,
 }
@@ -88,8 +79,6 @@ pub struct LinkRequest {
     connection_id: Option<Uuid>,
     redirect_to: Option<String>,
 }
-
-
 
 pub async fn link(
     State(state): State<AppState>,
@@ -182,7 +171,6 @@ pub async fn callback(
 fn redirect_to_provider(state: &AppState, jar: CookieJar, url: &str) -> Response {
     (jar.add(state_cookie(state, url)), Redirect::to(url)).into_response()
 }
-
 
 fn state_cookie(state: &AppState, url: &str) -> axum_extra::extract::cookie::Cookie<'static> {
     let value = url::Url::parse(url)

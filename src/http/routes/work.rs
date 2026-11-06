@@ -502,10 +502,12 @@ pub async fn add_message(
         &mut conn,
         org_id,
         actor,
-        id,
-        &body.visibility,
-        &body.body,
-        body.body_format.as_deref(),
+        messages::NewMessage {
+            case_id: id,
+            visibility: &body.visibility,
+            body: &body.body,
+            body_format: body.body_format.as_deref(),
+        },
         Cause::default(),
     )
     .await?;
@@ -609,11 +611,13 @@ pub async fn upload_attachment(
         &state.blobs,
         org_id,
         actor,
-        id,
-        query.message_id,
-        &query.file_name,
-        content_type,
-        body.to_vec(),
+        attachments::Upload {
+            case_id: id,
+            message_id: query.message_id,
+            file_name: &query.file_name,
+            content_type,
+            bytes: body.to_vec(),
+        },
     )
     .await?;
     Ok((

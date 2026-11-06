@@ -191,24 +191,6 @@ pub(crate) async fn find_or_create(
 ) -> ServiceResult<Uuid> {
     let email =
         normalize_email(email).map_err(|_| invalid("requester", "has an invalid email address"))?;
-    if let Some(id) = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM contacts WHERE org_id = $1 AND lower(email) = lower($2)",
-    )
-    .bind(org_id)
-    .bind(email)
-    .fetch_optional(&mut *conn)
-    .await?
-    {
-        if let Some(user_id) = user_id {
-            sqlx::query("UPDATE contacts SET user_id = $3 WHERE org_id = $1 AND id = $2 AND user_id IS NULL")
-                .bind(org_id)
-                .bind(id)
-                .bind(user_id)
-                .execute(&mut *conn)
-                .await?;
-        }
-        return Ok(id);
-    }
     let display_name = name
         .map(str::trim)
         .filter(|n| !n.is_empty())
@@ -217,14 +199,36 @@ pub(crate) async fn find_or_create(
         .take(200)
         .collect::<String>();
     let id = Uuid::now_v7();
-    sqlx::query("INSERT INTO contacts (id, org_id, email, display_name, user_id) VALUES ($1, $2, $3, $4, $5)")
-        .bind(id)
+    let inserted: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO contacts (id, org_id, email, display_name, user_id) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (org_id, lower(email)) WHERE email IS NOT NULL DO NOTHING
+         RETURNING id",
+    )
+    .bind(id)
+    .bind(org_id)
+    .bind(email)
+    .bind(display_name)
+    .bind(user_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if inserted.is_none() {
+        let existing: Uuid = sqlx::query_scalar(
+            "SELECT id FROM contacts WHERE org_id = $1 AND lower(email) = lower($2)",
+        )
         .bind(org_id)
         .bind(email)
-        .bind(display_name)
-        .bind(user_id)
-        .execute(&mut *conn)
+        .fetch_one(&mut *conn)
         .await?;
+        if let Some(user_id) = user_id {
+            sqlx::query("UPDATE contacts SET user_id = $3 WHERE org_id = $1 AND id = $2 AND user_id IS NULL")
+                .bind(org_id)
+                .bind(existing)
+                .bind(user_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+        return Ok(existing);
+    }
     events::emit(
         conn,
         org_id,

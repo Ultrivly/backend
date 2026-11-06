@@ -1,6 +1,3 @@
-
-
-
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -84,7 +81,6 @@ async fn team_member_must_belong_to_the_teams_org(pool: PgPool) {
         .await
         .unwrap();
 
-    
     let err =
         sqlx::query("INSERT INTO team_members (org_id, team_id, user_id) VALUES ($1, $2, $3)")
             .bind(org_a)
@@ -102,7 +98,6 @@ async fn attachment_storage_key_must_be_under_its_org(pool: PgPool) {
     let org_a = create_org(&pool, "acme").await;
     let org_b = create_org(&pool, "globex").await;
 
-    
     let err = sqlx::query(
         "INSERT INTO attachments (id, org_id, case_id, file_name, content_type, size_bytes, sha256, storage_key)
          VALUES ($1, $2, $3, 'a.txt', 'text/plain', 1, decode(repeat('00', 32), 'hex'), $4)",

@@ -1,12 +1,3 @@
-
-
-
-
-
-
-
-
-
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -18,9 +9,7 @@ use crate::audit::{self, Actor};
 use crate::platform::authz::{self, AuthzError, Permission};
 use crate::platform::blob::BlobStore;
 
-
 pub const DEFAULT_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-
 
 const BATCH_SIZE: i64 = 200;
 
@@ -31,8 +20,6 @@ pub enum Kind {
     Case,
     Attachment,
 }
-
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Target {
@@ -81,8 +68,7 @@ pub enum DeletionError {
     NotFound,
     #[error("permission denied")]
     Forbidden,
-    
-    
+
     #[error("confirmation does not match")]
     ConfirmationMismatch,
     #[error("already scheduled for deletion")]
@@ -104,24 +90,19 @@ impl From<AuthzError> for DeletionError {
     }
 }
 
-
-
 struct Statements {
     type_name: &'static str,
-    
-    
+
     lookup: &'static str,
-    
+
     schedule: &'static str,
     restore: &'static str,
-    
+
     due: &'static str,
     purge: &'static str,
 }
 
 impl Kind {
-    
-    
     pub fn permission(self) -> Permission {
         match self {
             Kind::Organization => Permission::OrganizationDelete,
@@ -265,7 +246,6 @@ pub async fn schedule(
     Ok(purge_after)
 }
 
-
 pub async fn restore(
     conn: &mut PgConnection,
     target: Target,
@@ -312,17 +292,13 @@ pub struct PurgeReport {
     pub cases: u64,
     pub attachments: u64,
     pub files_deleted: u64,
-    
+
     pub files_failed: u64,
 }
-
-
 
 pub async fn purge_due(pool: &PgPool, blobs: &BlobStore) -> anyhow::Result<PurgeReport> {
     let mut report = PurgeReport::default();
 
-    
-    
     for kind in [
         Kind::Organization,
         Kind::Workspace,
@@ -356,13 +332,10 @@ pub async fn purge_due(pool: &PgPool, blobs: &BlobStore) -> anyhow::Result<Purge
     Ok(report)
 }
 
-
 async fn purge_one(pool: &PgPool, target: Target) -> anyhow::Result<bool> {
     let sql = target.kind.statements();
     let mut tx = pool.begin().await?;
 
-    
-    
     sqlx::query("SET CONSTRAINTS ALL DEFERRED")
         .execute(&mut *tx)
         .await?;
@@ -379,8 +352,6 @@ async fn purge_one(pool: &PgPool, target: Target) -> anyhow::Result<bool> {
 
     let org_gone = target.kind == Kind::Organization;
     if org_gone {
-        
-        
         sqlx::query("INSERT INTO blob_deletions (storage_key, is_prefix) VALUES ($1, true)")
             .bind(format!("org/{}/", target.org_id))
             .execute(&mut *tx)
@@ -390,8 +361,6 @@ async fn purge_one(pool: &PgPool, target: Target) -> anyhow::Result<bool> {
     audit::record(
         &mut tx,
         audit::Event {
-            
-            
             org_id: (!org_gone).then_some(target.org_id),
             actor: Actor::System,
             action: &format!("{}.purged", sql.type_name),
@@ -406,8 +375,6 @@ async fn purge_one(pool: &PgPool, target: Target) -> anyhow::Result<bool> {
     tracing::info!(kind = sql.type_name, id = %target.id, org_id = %target.org_id, "purged");
     Ok(true)
 }
-
-
 
 async fn delete_queued_files(pool: &PgPool, blobs: &BlobStore) -> anyhow::Result<(u64, u64)> {
     let (mut deleted, mut failed) = (0, 0);
